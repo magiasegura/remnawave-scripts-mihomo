@@ -202,17 +202,108 @@ xray_rollback() {
     [ -f "$snapshot/complete" ] || return 1
     xray_backup || return 1
     xray_restore "$snapshot" || return 1
-    if [ -f "$COMPOSE_FILE" ]; then xray_restart && xray_check_running || return 1; fi
+    if [ -f "$COMPOSE_FILE" ]; then xray_restart && xray_check_running restored || return 1; fi
     echo "Xray restored from $snapshot"
 }
 
+xray_edit_compose() {
+    local mode="$1" temporary
+    [ -f "$COMPOSE_FILE" ] || return 1
+    temporary=$(mktemp "${COMPOSE_FILE}.xray.XXXXXX") || return 1
+    cp -p "$COMPOSE_FILE" "$temporary" || { rm -f "$temporary"; return 1; }
+    # shortcut: block YAML with short volume entries only; reject other forms until a YAML parser is available.
+    if ! awk -v mode="$mode" -v app="$APP_NAME" -v data="$DATA_DIR" \
+        -v geoip="$(test -f "$DATA_DIR/geoip.dat" && echo yes)" \
+        -v geosite="$(test -f "$DATA_DIR/geosite.dat" && echo yes)" '
+        function fail(message) { print "Compose: " message > "/dev/stderr"; bad=1; exit 1 }
+        function indent(line) { match(line, /[^ ]/); return RSTART-1 }
+        function value(line) { sub(/^[^:]*:[ ]*/, "", line); gsub(/["\047]/, "", line); sub(/[ ]+#.*/, "", line); return line }
+        { lines[NR]=$0 }
+        END {
+            for (i=1; i<=NR; i++) {
+                line=lines[i]
+                if (line ~ /\t|\r/) fail("tabs or CRLF are unsupported")
+                if (line ~ /^services:[ ]*$/) { services=1; continue }
+                if (!services) continue
+                if (line ~ /^[^ #]/) { if (current) ends[current]=i-1; break }
+                if (!level && line !~ /^[ ]*(#.*)?$/) {
+                    if (line !~ /^ +[A-Za-z0-9_-]+:[ ]*$/) fail("unsupported service declaration")
+                    level=indent(line)
+                }
+                if (level && indent(line)==level && line !~ /^[ ]*(#.*)?$/ && line !~ /^ +[A-Za-z0-9_-]+:[ ]*$/) fail("unsupported service declaration")
+                if (level && indent(line)==level && line ~ /^ +[A-Za-z0-9_-]+:[ ]*$/) {
+                    if (current) ends[current]=i-1
+                    current++; starts[current]=i; ends[current]=NR
+                } else if (current) {
+                    if (line ~ /^ +container_name:/ && value(line)==app) named[current]=1
+                    if (line ~ /^ +image:/ && value(line) ~ /(^|\/)remnawave\/node(:|@|$)/) image[current]=1
+                }
+            }
+            for (n=1; n<=current; n++) if (named[n]) { target=n; matches++ }
+            if (!matches) for (n=1; n<=current; n++) if (image[n]) { target=n; matches++ }
+            if (matches!=1) fail("expected exactly one node service; use a unique container_name")
+            start=starts[target]; end=ends[target]; prop=level+2
+            for (i=start+1; i<=end; i++) if (lines[i] ~ /^ +[A-Za-z0-9_-]+:/) {
+                if (!foundprop || indent(lines[i])<prop) prop=indent(lines[i])
+                foundprop=1
+            }
+            spaces=sprintf("%*s", prop, "")
+            for (i=start+1; i<=end; i++) if (indent(lines[i])==prop && lines[i] ~ /^ +volumes:/) {
+                if (vs) fail("duplicate volumes key")
+                if (lines[i] !~ /^ +volumes:[ ]*(#.*)?$/) fail("inline volumes are unsupported")
+                vs=i; ve=i
+                for (j=i+1; j<=end; j++) {
+                    entry=lines[j]
+                    if (entry ~ /^[ ]*(#.*)?$/) { kept[++count]=entry; ve=j; continue }
+                    if (indent(entry)<=prop) break
+                    if (entry !~ /^ +-[ ]+/ || entry ~ /^ +-[ ]*(type:|\{)/) fail("long volume syntax is unsupported")
+                    ve=j
+                    if (entry ~ /:\/usr\/local\/bin\/xray([:"\047 ]|$)/ || entry ~ /:\/usr\/local\/share\/xray\/(geoip|geosite)\.dat([:"\047 ]|$)/) continue
+                    kept[++count]=entry; items++
+                }
+            }
+            insertion=vs ? vs : start+1
+            for (i=1; i<=NR+1; i++) {
+                if (i==insertion) {
+                    if (mode=="install" || items) print spaces "volumes:"
+                    for (j=1; j<=count; j++) print kept[j]
+                    if (mode=="install") {
+                        print spaces "  - " data "/xray:/usr/local/bin/xray"
+                        if (geoip=="yes") print spaces "  - " data "/geoip.dat:/usr/local/share/xray/geoip.dat"
+                        if (geosite=="yes") print spaces "  - " data "/geosite.dat:/usr/local/share/xray/geosite.dat"
+                    }
+                }
+                if (i<=NR && !(vs && i>=vs && i<=ve)) print lines[i]
+            }
+        }' "$COMPOSE_FILE" > "$temporary"; then
+        rm -f "$temporary"
+        return 1
+    fi
+    mv -f "$temporary" "$COMPOSE_FILE"
+}
+
 xray_check_running() {
-    local attempt
-    for attempt in 1 2 3 4 5; do
-        if docker exec "$APP_NAME" xray -version >/dev/null 2>&1; then return 0; fi
+    local mode="${1:-external}" attempt state mount hashes expected='' consecutive=0
+    if [ "$mode" = external ]; then expected=$(sha256sum "$DATA_DIR/xray") || return 1; expected=${expected%% *}; fi
+    for attempt in {1..30}; do
+        state=$(docker inspect -f '{{.State.Running}} {{.State.Restarting}} {{if .State.Health}}{{.State.Health.Status}}{{end}}' "$APP_NAME" 2>/dev/null) || state=''
+        mount=$(docker inspect -f '{{range .Mounts}}{{if eq .Destination "/usr/local/bin/xray"}}{{.Source}}{{end}}{{end}}' "$APP_NAME" 2>/dev/null) || mount=''
+        # Hash the live executable, rather than launching a second Xray just to print its version.
+        hashes=$(docker exec "$APP_NAME" sh -c 'for exe in /proc/[0-9]*/exe; do
+            target=$(readlink "$exe" 2>/dev/null) || continue
+            case "$target" in */xray|*/xray\ \(deleted\)) sha256sum "$exe" 2>/dev/null ;; esac
+        done' 2>/dev/null | awk '{print $1}') || hashes=''
+        if [[ "$state" = 'true false '* ]] && [[ "$state" != *unhealthy* && "$state" != *starting* ]] && [ -n "$hashes" ] && \
+            { [ "$mode" != external ] || { [ "$mount" = "$DATA_DIR/xray" ] && grep -Fxq "$expected" <<< "$hashes"; }; } && \
+            { [ "$mode" != builtin ] || [ -z "$mount" ]; }; then
+            consecutive=$((consecutive+1))
+            [ "$consecutive" -ge 2 ] && return 0
+        else
+            consecutive=0
+        fi
         sleep 2
     done
-    echo 'Xray did not start in the container' >&2
+    echo "Xray readiness failed: check node health, live process and external mount ($mode)" >&2
     return 1
 }
 
@@ -223,7 +314,7 @@ xray_finish_transaction() {
         echo 'Xray operation failed; restoring previous files and source' >&2
         if xray_restore "$XRAY_TRANSACTION_BACKUP"; then
             if [ -f "$COMPOSE_FILE" ]; then
-                (xray_restart && xray_check_running) || echo "Recovery restart failed; backup: $XRAY_TRANSACTION_BACKUP" >&2
+                (xray_restart && xray_check_running restored) || echo "Recovery restart failed; backup: $XRAY_TRANSACTION_BACKUP" >&2
             fi
         else
             echo "RESTORE FAILED; backup: $XRAY_TRANSACTION_BACKUP" >&2
@@ -626,75 +717,8 @@ update_docker_compose() {
         exit 1
     fi
     
-    local service_indent=$(get_service_property_indentation "$compose_file")
-    local indent_type=""
-    if [[ "$service_indent" =~ $'\t' ]]; then
-        indent_type=$'\t'
-    else
-        indent_type="  "
-    fi
-    local volume_item_indent="${service_indent}${indent_type}"
-    
-    local escaped_service_indent=$(escape_for_sed "$service_indent")
-    local escaped_volume_item_indent=$(escape_for_sed "$volume_item_indent")
+    xray_edit_compose install || exit 1
 
-    if grep -q "^${escaped_service_indent}volumes:" "$compose_file"; then
-        # Remove existing xray-related volumes using # as delimiter to avoid issues with / in paths
-        sed -i "\#$xray_file#d" "$compose_file"
-        sed -i "\#geoip\.dat#d" "$compose_file"
-        sed -i "\#geosite\.dat#d" "$compose_file"
-        
-        # Create temporary file with volume mounts
-        temp_volumes=$(mktemp)
-        echo "${volume_item_indent}- $xray_file:/usr/local/bin/xray" > "$temp_volumes"
-        if [ -f "$geoip_file" ]; then
-            echo "${volume_item_indent}- $geoip_file:/usr/local/share/xray/geoip.dat" >> "$temp_volumes"
-        fi
-        if [ -f "$geosite_file" ]; then
-            echo "${volume_item_indent}- $geosite_file:/usr/local/share/xray/geosite.dat" >> "$temp_volumes"
-        fi
-        
-        # Insert volumes after the volumes: line
-        sed -i "/^${escaped_service_indent}volumes:/r $temp_volumes" "$compose_file"
-        rm "$temp_volumes"
-        colorized_echo green "Updated Xray volumes in existing volumes section"
-        
-    elif grep -q "^${escaped_service_indent}# volumes:" "$compose_file"; then
-        sed -i "s|^${escaped_service_indent}# volumes:|${service_indent}volumes:|g" "$compose_file"
-        
-        # Create temporary file with volume mounts
-        temp_volumes=$(mktemp)
-        echo "${volume_item_indent}- $xray_file:/usr/local/bin/xray" > "$temp_volumes"
-        if [ -f "$geoip_file" ]; then
-            echo "${volume_item_indent}- $geoip_file:/usr/local/share/xray/geoip.dat" >> "$temp_volumes"
-        fi
-        if [ -f "$geosite_file" ]; then
-            echo "${volume_item_indent}- $geosite_file:/usr/local/share/xray/geosite.dat" >> "$temp_volumes"
-        fi
-        
-        # Insert volumes after the volumes: line
-        sed -i "/^${escaped_service_indent}volumes:/r $temp_volumes" "$compose_file"
-        rm "$temp_volumes"
-        colorized_echo green "Uncommented volumes section and added Xray volumes"
-        
-    else
-        # Create temporary file with volumes section
-        temp_volumes=$(mktemp)
-        echo "${service_indent}volumes:" > "$temp_volumes"
-        echo "${volume_item_indent}- $xray_file:/usr/local/bin/xray" >> "$temp_volumes"
-        if [ -f "$geoip_file" ]; then
-            echo "${volume_item_indent}- $geoip_file:/usr/local/share/xray/geoip.dat" >> "$temp_volumes"
-        fi
-        if [ -f "$geosite_file" ]; then
-            echo "${volume_item_indent}- $geosite_file:/usr/local/share/xray/geosite.dat" >> "$temp_volumes"
-        fi
-        
-        # Insert volumes section after restart: always
-        sed -i "/^${escaped_service_indent}restart: always/r $temp_volumes" "$compose_file"
-        rm "$temp_volumes"
-        colorized_echo green "Added new volumes section with Xray volumes"
-    fi
-    
     colorized_echo green "docker-compose.yml configuration updated"
     
     # Show what was mounted

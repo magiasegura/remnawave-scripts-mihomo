@@ -59,3 +59,9 @@ staging failures, installation, complete snapshots, rollback, locking and contai
 `test-xray-menu.sh` runs the original menus with fixture GitHub responses, including offline rollback.
 Both suites use temporary directories and stub network/container operations; no server is contacted.
 See [the feature README](../README-xray-sources.md) for usage and limitations.
+
+`test-xray-compose.sh` covers service isolation, restart policies, replacement,
+builtin restore and safe rejection of unsupported YAML. `test-xray-health.sh`
+covers live-process hashes, mount mismatch and container health. The complete
+update flow including EOF and validation/restart/health failure rollback is in
+`test-xray-update-flow.sh`.

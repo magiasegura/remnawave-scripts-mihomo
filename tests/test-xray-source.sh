@@ -131,7 +131,15 @@ for script in remnanode.sh remnanode-xray-update.sh; do
     echo "PASS: $script rejects concurrent operation before download or mutation"
     eval "$health_function"
     sleep() { :; }
-    docker() { [ "$healthy" = true ]; }
+    docker() {
+        [ "$healthy" = true ] || return 1
+        case "$*" in
+            *'.State.Running'*) echo 'true false healthy' ;;
+            *'.Mounts'*) echo "$DATA_DIR/xray" ;;
+            exec*) sha256sum "$DATA_DIR/xray" ;;
+            *) return 1 ;;
+        esac
+    }
     healthy=true
     xray_check_running
     healthy=false
