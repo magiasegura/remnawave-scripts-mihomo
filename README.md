@@ -1,4 +1,75 @@
-> Local feature branch: [Xray source selection, backups and rollback](README-xray-sources.md).
+# RemnaNode with selectable Xray sources
+
+Based on [DigneZzZ/remnawave-scripts](https://github.com/DigneZzZ/remnawave-scripts).
+Branch `feature/jolymmiles-xray` adds `XTLS/Xray-core` and `Jolymmiles/Xray-core`
+to the existing `remnanode` menu, with a saved source, backups and rollback.
+
+## Upgrade an existing installation
+
+No node reinstall is required. Obtain `remnanode.sh` from this repository on
+`feature/jolymmiles-xray`. This repository is private; upstream download commands
+do not install this version. From your local checkout, upload the file:
+
+```bash
+scp ./remnanode.sh USER@SERVER:/tmp/remnanode-joly.sh
+```
+
+Close any running `remnanode` menu. On the server, validate and back up the old
+CLI before replacing it:
+
+```bash
+backup="/usr/local/bin/remnanode.backup.$(date +%Y%m%d-%H%M%S)"
+bash -n /tmp/remnanode-joly.sh &&
+sudo cp -a /usr/local/bin/remnanode "$backup" &&
+sudo install -m 0755 /tmp/remnanode-joly.sh /usr/local/bin/remnanode &&
+printf 'Previous CLI saved at: %s\n' "$backup"
+```
+
+Save the printed backup path. These commands assume the default installation
+name `remnanode`; adapt the CLI path for a custom node name. Replacing this file
+preserves the node container, keys and configuration and does not restart it.
+
+## Select a core and update the node
+
+Run `sudo remnanode`, choose **11 — Update Xray-core**, then **2 — Jolymmiles**
+or **1 — XTLS**, and select a release. Direct entry: `sudo remnanode core-update`.
+Changing the core restarts the node and briefly interrupts connections.
+The source is saved after a successful update.
+
+Menu options: `P` changes source, `M` enters a tag, `A/S` toggles pre-releases,
+`B` restores the last snapshot, and `D` restores the container builtin core.
+
+`sudo remnanode update` updates the node image. `core-update` updates Xray.
+An external core remains mounted when that mount is preserved during node
+updates; compatibility with a newer node version must be checked separately.
+CLI auto-update is disabled in this branch. To update the CLI, repeat the file
+replacement from this repository. Upstream `install-script` can overwrite it.
+
+Core snapshots contain the binary, geodata, source, tag and Compose file.
+Failed updates attempt automatic recovery; use `B` for manual core rollback.
+To restore the previous CLI in the same SSH session:
+
+```bash
+sudo cp -a "$backup" /usr/local/bin/remnanode
+```
+
+## Validation
+
+99 existing checks and 68 Xray scenarios pass. Compose changes are scoped to
+the node service. Readiness checks inspect container state, the live process,
+the external mount and executable hash. Unsupported YAML is rejected unchanged.
+Real Linux/Docker and client traffic have not been tested; use a test node first.
+
+[Русская инструкция](README_RU.md) ·
+[Detailed guide, Russian](README-xray-sources.md) ·
+[Test report, Russian](TESTING-xray-sources.md)
+
+---
+
+## Original DigneZzZ documentation
+
+The installation commands below download upstream DigneZzZ scripts. Use the
+instructions above to switch an existing node to this branch.
 
 <div align="center">
 
