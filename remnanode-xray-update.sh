@@ -1,5 +1,6 @@
 #!/bin/bash
 # Version: 1.0.0
+set -e
 # RemnaNode Xray-core Updater
 # Created by DigneZzZ
 
@@ -102,8 +103,7 @@ find_remnanode_directory() {
 get_current_xray_core_version() {
     local xray_file="/var/lib/remnanode/xray"
     if [ -f "$xray_file" ]; then
-        version_output=$("$xray_file" -version 2>/dev/null)
-        if [ $? -eq 0 ]; then
+        if version_output=$("$xray_file" -version 2>/dev/null); then
             version=$(echo "$version_output" | head -n1 | awk '{print $2}')
             echo "$version"
             return
@@ -112,16 +112,176 @@ get_current_xray_core_version() {
     echo "Not installed"
 }
 
-# Version validation via GitHub API
-validate_version() {
-    local version="$1"
-    local response=$(curl -s "https://api.github.com/repos/XTLS/Xray-core/releases/tags/$version")
-    if echo "$response" | grep -q '"message": "Not Found"'; then
-        echo "invalid"
-    else
-        echo "valid"
+# BEGIN XRAY SOURCE
+# Embedded in both entrypoints so curl | bash installs remain self-contained.
+xray_load_source() {
+    XRAY_REPO=XTLS/Xray-core
+    if [ -f "$DATA_DIR/xray-source" ]; then
+        IFS= read -r XRAY_REPO < "$DATA_DIR/xray-source" || return 1
     fi
+    case "$XRAY_REPO" in
+        XTLS/Xray-core|Jolymmiles/Xray-core) ;;
+        *) echo "Invalid Xray source in $DATA_DIR/xray-source" >&2; return 1 ;;
+    esac
 }
+
+xray_choose_source() {
+    local choice
+    while true; do
+        printf '\nXray source: %s\n1) XTLS/Xray-core\n2) Jolymmiles/Xray-core\nEnter) Keep current source\nQ) Cancel\n' "$XRAY_REPO"
+        read -r -p '> ' choice || return 1
+        case "$choice" in
+            1) XRAY_REPO=XTLS/Xray-core; return 0 ;;
+            2) XRAY_REPO=Jolymmiles/Xray-core; return 0 ;;
+            '') return 0 ;;
+            q|Q) return 1 ;;
+        esac
+    done
+}
+
+xray_valid_tag() {
+    [[ "$1" =~ ^[a-zA-Z0-9][a-zA-Z0-9._+-]{0,127}$ ]]
+}
+
+xray_validate_version() {
+    local response tag
+    if xray_valid_tag "$1" && response=$(curl -fsSL --connect-timeout 15 --max-time 60 "https://api.github.com/repos/$XRAY_REPO/releases/tags/$1"); then
+        tag=$(printf '%s\n' "$response" | sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n1)
+        if [ "$tag" = "$1" ]; then echo valid; return; fi
+    fi
+    echo invalid
+}
+
+xray_backup() {
+    local snapshot file
+    mkdir -p "$DATA_DIR/xray-backups" || return 1
+    chmod 700 "$DATA_DIR/xray-backups" || return 1
+    snapshot=$(mktemp -d "$DATA_DIR/xray-backups/$(date -u +%Y%m%dT%H%M%SZ).XXXXXX") || return 1
+    for file in xray geoip.dat geosite.dat xray-source xray-version; do
+        if [ -e "$DATA_DIR/$file" ]; then cp -p "$DATA_DIR/$file" "$snapshot/$file" || return 1; fi
+    done
+    if [ -f "$COMPOSE_FILE" ]; then cp -p "$COMPOSE_FILE" "$snapshot/compose" || return 1; fi
+    touch "$snapshot/complete" || return 1
+    printf '%s\n' "${snapshot##*/}" > "$DATA_DIR/xray-backups/latest" || return 1
+    XRAY_TRANSACTION_BACKUP="$snapshot"
+    echo "Xray backup: $snapshot"
+}
+
+xray_restore() {
+    local snapshot="$1" file temporary
+    [ -f "$snapshot/complete" ] || { echo 'Incomplete Xray backup' >&2; return 1; }
+    for file in xray geoip.dat geosite.dat xray-source xray-version; do
+        if [ -f "$snapshot/$file" ]; then
+            # Rename the executable: overwriting a running ELF can fail with ETXTBSY.
+            if [ "$file" = xray ]; then
+                temporary=$(mktemp "$DATA_DIR/.xray-restore.XXXXXX") || return 1
+                if ! cp -p "$snapshot/$file" "$temporary" || ! mv -f "$temporary" "$DATA_DIR/$file"; then
+                    rm -f "$temporary"
+                    return 1
+                fi
+            else
+                cp -p "$snapshot/$file" "$DATA_DIR/$file" || return 1
+            fi
+        else
+            rm -f "$DATA_DIR/$file" || return 1
+        fi
+    done
+    if [ -f "$snapshot/compose" ]; then
+        cp -p "$snapshot/compose" "$COMPOSE_FILE" || return 1
+    else
+        rm -f "$COMPOSE_FILE" || return 1
+    fi
+    xray_load_source
+}
+
+xray_rollback() {
+    local name snapshot
+    IFS= read -r name < "$DATA_DIR/xray-backups/latest" || { echo 'No Xray backup available' >&2; return 1; }
+    [[ "$name" =~ ^[a-zA-Z0-9.]+$ ]] || return 1
+    snapshot="$DATA_DIR/xray-backups/$name"
+    [ -f "$snapshot/complete" ] || return 1
+    xray_backup || return 1
+    xray_restore "$snapshot" || return 1
+    if [ -f "$COMPOSE_FILE" ]; then xray_restart && xray_check_running || return 1; fi
+    echo "Xray restored from $snapshot"
+}
+
+xray_check_running() {
+    local attempt
+    for attempt in 1 2 3 4 5; do
+        if docker exec "$APP_NAME" xray -version >/dev/null 2>&1; then return 0; fi
+        sleep 2
+    done
+    echo 'Xray did not start in the container' >&2
+    return 1
+}
+
+xray_finish_transaction() {
+    local rc="$1"
+    trap - EXIT
+    if [ "$rc" -ne 0 ] && [ -n "$XRAY_TRANSACTION_BACKUP" ]; then
+        echo 'Xray operation failed; restoring previous files and source' >&2
+        if xray_restore "$XRAY_TRANSACTION_BACKUP"; then
+            if [ -f "$COMPOSE_FILE" ]; then
+                (xray_restart && xray_check_running) || echo "Recovery restart failed; backup: $XRAY_TRANSACTION_BACKUP" >&2
+            fi
+        else
+            echo "RESTORE FAILED; backup: $XRAY_TRANSACTION_BACKUP" >&2
+        fi
+    fi
+    if [ -n "$XRAY_STAGE" ]; then rm -rf "$XRAY_STAGE"; fi
+    exit "$rc"
+}
+
+xray_transaction() (
+    set -e
+    command -v flock >/dev/null || { echo 'flock (util-linux) is required' >&2; exit 1; }
+    mkdir -p "$DATA_DIR"
+    exec 9> "$DATA_DIR/.xray-update.lock"
+    flock -n 9 || { echo 'Another Xray operation is running' >&2; exit 1; }
+    XRAY_TRANSACTION_BACKUP=''
+    XRAY_STAGE=''
+    trap 'xray_finish_transaction "$?"' EXIT
+    trap 'exit 130' INT
+    trap 'exit 143' TERM
+    "$@"
+)
+
+xray_install_release() {
+    local version="$1" file
+    xray_valid_tag "$version" || return 1
+    case "$XRAY_REPO" in XTLS/Xray-core|Jolymmiles/Xray-core) ;; *) return 1 ;; esac
+    XRAY_STAGE=$(mktemp -d "$DATA_DIR/.xray-stage.XXXXXX") || return 1
+    echo "Downloading $XRAY_REPO $version ($ARCH)"
+    curl -fL --connect-timeout 15 --max-time 300 --retry 2 \
+        "https://github.com/$XRAY_REPO/releases/download/$version/Xray-linux-$ARCH.zip" \
+        -o "$XRAY_STAGE/release.zip" || return 1
+    # Extract only known members; archive paths and symlinks never reach DATA_DIR.
+    unzip -p "$XRAY_STAGE/release.zip" xray > "$XRAY_STAGE/xray" || return 1
+    [ -s "$XRAY_STAGE/xray" ] || return 1
+    chmod 755 "$XRAY_STAGE/xray" || return 1
+    "$XRAY_STAGE/xray" -version || return 1
+    for file in geoip.dat geosite.dat; do
+        if unzip -Z1 "$XRAY_STAGE/release.zip" | grep -qx "$file"; then
+            unzip -p "$XRAY_STAGE/release.zip" "$file" > "$XRAY_STAGE/$file" || return 1
+            [ -s "$XRAY_STAGE/$file" ] || return 1
+        fi
+    done
+    xray_backup || return 1
+    for file in xray geoip.dat geosite.dat; do
+        # A fork may omit geodata; retain the installed databases in that case.
+        if [ -f "$XRAY_STAGE/$file" ]; then mv -f "$XRAY_STAGE/$file" "$DATA_DIR/$file" || return 1; fi
+    done
+    printf '%s\n' "$XRAY_REPO" > "$DATA_DIR/xray-source" || return 1
+    printf '%s\n' "$version" > "$DATA_DIR/xray-version" || return 1
+}
+# END XRAY SOURCE
+
+
+xray_restart() { restart_remnanode; }
+
+# Version validation via GitHub API
+validate_version() { xray_validate_version "$1"; }
 
 # Fetch version list from GitHub
 fetch_versions() {
@@ -130,14 +290,14 @@ fetch_versions() {
     
     if [ "$include_prereleases" = true ]; then
         colorized_echo cyan "   Including pre-releases..."
-        latest_releases=$(curl -s "https://api.github.com/repos/XTLS/Xray-core/releases?per_page=8")
+        latest_releases=$(curl -fsSL --connect-timeout 15 --max-time 60 "https://api.github.com/repos/$XRAY_REPO/releases?per_page=8")
     else
         colorized_echo cyan "   Stable releases only..."
         # XTLS помечает большинство релизов как pre-release: последний
         # стабильный тег может находиться глубоко в списке (15+ записей).
         # При маленькой per_page в выборку попадают только pre-release, и
         # фильтр ниже не находит ни одной стабильной версии.
-        latest_releases=$(curl -s "https://api.github.com/repos/XTLS/Xray-core/releases?per_page=100")
+        latest_releases=$(curl -fsSL --connect-timeout 15 --max-time 60 "https://api.github.com/repos/$XRAY_REPO/releases?per_page=100")
     fi
     
     if [ -z "$latest_releases" ] || echo "$latest_releases" | grep -q '"message":'; then
@@ -169,7 +329,7 @@ fetch_versions() {
             if [ -n "$current_version" ] && [ $count -lt $max_count ]; then
                 versions+=("$current_version")
                 prereleases+=("$is_prerelease")
-                ((count++))
+                ((count++)) || true
             fi
             current_version=""
         fi
@@ -194,7 +354,7 @@ print_menu() {
     echo -e "\033[38;5;8m$(printf '─%.0s' $(seq 1 70))\033[0m"
     echo
     
-    current_version=$(get_current_xray_core_version)
+    current_version=$(get_current_xray_core_version || true)
     echo -e "\033[1;37m🌐 Current Status:\033[0m"
     printf "   \033[38;5;15m%-15s\033[0m \033[38;5;250m%s\033[0m\n" "Xray Version:" "$current_version"
     printf "   \033[38;5;15m%-15s\033[0m \033[38;5;250m%s\033[0m\n" "Architecture:" "$ARCH"
@@ -244,6 +404,8 @@ print_menu() {
 
 # Интерактивный выбор и загрузка Xray-core
 get_xray_core() {
+    xray_load_source || exit 1
+    xray_choose_source || exit 0
     identify_the_operating_system_and_architecture
     clear
     
@@ -255,11 +417,13 @@ get_xray_core() {
         # всех релизов — иначе до меню с опцией A вообще не добраться.
         colorized_echo yellow "   Falling back to all releases (incl. pre-releases)..."
         show_prereleases=true
-        fetch_versions "$show_prereleases" || exit 1
+        versions=(); prereleases=()
+        fetch_versions "$show_prereleases" || true
     fi
     
     while true; do
         print_menu
+        printf "Selected source: %s\nP: Choose source\nB: Roll back last Xray backup\n" "$XRAY_REPO"
         echo -n -e "\033[1;37m> \033[0m"
         read choice
         
@@ -282,6 +446,13 @@ get_xray_core() {
             fi
             break
             
+        elif [[ "$choice" = [Pp] ]]; then
+            xray_choose_source || continue
+            versions=(); prereleases=()
+            fetch_versions "$show_prereleases" || { show_prereleases=true; fetch_versions true || true; }
+        elif [[ "$choice" = [Bb] ]]; then
+            read -r -p 'Restore last Xray backup and restart node? (y/n): ' confirm_rollback
+            if [[ "$confirm_rollback" = [Yy] ]]; then xray_rollback; exit $?; fi
         elif [ "$choice" == "M" ] || [ "$choice" == "m" ]; then
             echo
             colorized_echo blue "📝 Manual version input:"
@@ -301,7 +472,7 @@ get_xray_core() {
                     break 2
                 else
                     colorized_echo red "❌ Version $custom_version not found. Try again."
-                    colorized_echo cyan "   Hint: Check https://github.com/XTLS/Xray-core/releases"
+                    colorized_echo cyan "   Hint: Check https://github.com/$XRAY_REPO/releases"
                     echo
                 fi
             done
@@ -356,50 +527,8 @@ get_xray_core() {
         colorized_echo green "✅ Packages installed successfully"
     fi
     
-    mkdir -p /var/lib/remnanode
-    cd /var/lib/remnanode
-    
-    xray_filename="Xray-linux-$ARCH.zip"
-    xray_download_url="https://github.com/XTLS/Xray-core/releases/download/${selected_version}/${xray_filename}"
-    
-    colorized_echo blue "📥 Downloading Xray-core $selected_version..."
-    colorized_echo cyan "   URL: $xray_download_url"
-    
-    if wget "${xray_download_url}" -q --show-progress; then
-        colorized_echo green "✅ Download completed successfully"
-    else
-        colorized_echo red "❌ Download error!"
-        colorized_echo cyan "   Check internet connection or try another version."
-        exit 1
-    fi
-    
-    colorized_echo blue "📦 Extracting Xray-core..."
-    if unzip -o "${xray_filename}" -d "/var/lib/remnanode" >/dev/null 2>&1; then
-        colorized_echo green "✅ Extraction completed successfully"
-        
-        # Set permissions for executable
-        chmod +x "/var/lib/remnanode/xray"
-        
-        # Check what files were extracted
-        colorized_echo blue "📋 Extracted files:"
-        if [ -f "/var/lib/remnanode/xray" ]; then
-            colorized_echo green "   ✅ xray executable"
-        fi
-        if [ -f "/var/lib/remnanode/geoip.dat" ]; then
-            colorized_echo green "   ✅ geoip.dat"
-        fi
-        if [ -f "/var/lib/remnanode/geosite.dat" ]; then
-            colorized_echo green "   ✅ geosite.dat"
-        fi
-    else
-        colorized_echo red "❌ Extraction error!"
-        colorized_echo cyan "   The downloaded file may be corrupted."
-        exit 1
-    fi
-    
-    rm "${xray_filename}"
-    
-    colorized_echo green "🎉 Xray-core $selected_version installation completed!"
+    xray_install_release "$selected_version" || exit 1
+
 }
 
 # Backup management
@@ -603,6 +732,7 @@ restart_remnanode() {
     
     cd "$REMNANODE_DIR"
     
+    $compose_cmd -f "$compose_file" -p "$app_name" config >/dev/null
     $compose_cmd -f "$compose_file" -p "$app_name" down >/dev/null 2>&1
     
     if $compose_cmd -f "$compose_file" -p "$app_name" up -d --remove-orphans >/dev/null 2>&1; then
@@ -619,12 +749,20 @@ restart_remnanode() {
 
 # Main script logic
 main() {
+    DATA_DIR=/var/lib/remnanode
+    xray_transaction main_impl
+}
+
+main_impl() {
     find_remnanode_directory
+    COMPOSE_FILE="$REMNANODE_DIR/docker-compose.yml"
+    APP_NAME=$(basename "$REMNANODE_DIR")
     get_xray_core
     
     colorized_echo blue "Updating docker-compose.yml configuration..."
     update_docker_compose
     restart_remnanode
+    xray_check_running || exit 1
     
     echo
     echo -e "\033[38;5;8m$(printf '─%.0s' $(seq 1 60))\033[0m"

@@ -1,3 +1,5 @@
+> Локальная ветка: [выбор источника Xray, резервные копии и откат](README-xray-sources.md).
+
 <div align="center">
 
 <img src="assets/hero.svg" alt="Remnawave Scripts" width="880">

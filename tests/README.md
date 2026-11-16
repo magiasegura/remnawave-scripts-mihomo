@@ -51,3 +51,11 @@ revision that caused the outage:
 git show <pre-fix-rev>:remnawave.sh > /tmp/old.sh
 bash tests/test-no-unguarded-writes.sh /tmp/old.sh   # reports all 15 unguarded writes
 ```
+
+## Xray source selection
+
+`test-xray-source.sh` tests both standalone entrypoints: source/tag validation,
+staging failures, installation, complete snapshots, rollback, locking and container smoke checks.
+`test-xray-menu.sh` runs the original menus with fixture GitHub responses, including offline rollback.
+Both suites use temporary directories and stub network/container operations; no server is contacted.
+See [the feature README](../README-xray-sources.md) for usage and limitations.

@@ -1,3 +1,5 @@
+> Local feature branch: [Xray source selection, backups and rollback](README-xray-sources.md).
+
 <div align="center">
 
 <img src="assets/hero.svg" alt="Remnawave Scripts" width="880">
