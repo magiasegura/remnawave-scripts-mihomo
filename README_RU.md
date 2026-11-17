@@ -13,8 +13,11 @@
 1. Возьмите `remnanode.sh` из ветки `feature/jolymmiles-xray` этого репозитория.
    Если у вас уже есть локальный клон, выполните в его каталоге
    `git pull --ff-only origin feature/jolymmiles-xray`, находясь на этой ветке.
-   Репозиторий приватный, поэтому публичные ссылки `curl` из оригинального
-   проекта эту версию не установят.
+   Либо скачайте файл на своём компьютере из публичного репозитория:
+
+```bash
+curl -fSL https://raw.githubusercontent.com/magiasegura/remnawave-scripts-mihomo/feature/jolymmiles-xray/remnanode.sh -o remnanode.sh
+```
 2. Передайте файл на сервер. Выполните эту команду на своём компьютере из каталога проекта:
 
 ```bash
@@ -35,6 +38,19 @@ printf 'Старая версия скрипта: %s\n' "$backup"
 Сохраните путь к резервной копии, который выведет команда. Команды рассчитаны на стандартную
 установку с именем `remnanode`. Если команда ноды называется иначе, используйте
 её имя и соответствующий файл в `/usr/local/bin`.
+
+## Обновление скрипта
+
+После перехода новые версии CLI автоматически устанавливаются из этого
+репозитория при открытии меню. Для принудительного обновления только скрипта:
+
+```bash
+sudo remnanode install-script
+```
+
+Закройте старое меню и запустите `sudo remnanode` снова.
+Контейнеры эта команда не обновляет. Для нестандартного имени ноды используйте
+её команду вместо `remnanode`.
 
 ## Выбор форка из меню
 
@@ -91,7 +107,7 @@ sudo cp -a "$backup" /usr/local/bin/remnanode
 [![Лицензия MIT](https://img.shields.io/badge/Лицензия-MIT-yellow.svg)](./LICENSE)
 [![Shell](https://img.shields.io/badge/Язык-Bash-blue.svg)](#)
 [![remnawave.sh](https://img.shields.io/badge/remnawave.sh-6.8.0-blue.svg)](#-remnawave-panel)
-[![remnanode.sh](https://img.shields.io/badge/remnanode.sh-4.6.2-blue.svg)](#-remnanode)
+[![remnanode.sh](https://img.shields.io/badge/remnanode.sh-4.6.2-jm.1-blue.svg)](#-remnanode)
 [![Panel](https://img.shields.io/badge/Remnawave_Panel-3.4.x_ready-brightgreen.svg)](#)
 [![Локализация](https://img.shields.io/badge/🌐-RU_|_EN-green.svg)](./README.md)
 
@@ -117,7 +133,7 @@ sudo cp -a "$backup" /usr/local/bin/remnanode
 bash <(curl -Ls https://github.com/DigneZzZ/remnawave-scripts/raw/main/remnawave.sh) @ install
 
 # Нода RemnaNode
-bash <(curl -Ls https://github.com/DigneZzZ/remnawave-scripts/raw/main/remnanode.sh) @ install
+bash <(curl -Ls https://raw.githubusercontent.com/magiasegura/remnawave-scripts-mihomo/feature/jolymmiles-xray/remnanode.sh) @ install
 
 # Caddy Selfsteal — маскировка Reality
 bash <(curl -Ls https://github.com/DigneZzZ/remnawave-scripts/raw/main/selfsteal.sh) @ install
@@ -143,7 +159,7 @@ sudo bash <(curl -Ls https://github.com/DigneZzZ/remnawave-scripts/raw/main/remn
 | Скрипт | Версия | Что делает | Документация |
 |---|---|---|---|
 | 🚀 **remnawave.sh** | `6.8.0` | Панель: установка, Caddy, бэкапы, subscription-page | этот файл |
-| 🛰 **remnanode.sh** | `4.6.2` | Нода: Xray-core, логи, автоперезапуск | этот файл |
+| 🛰 **remnanode.sh** | `4.6.2-jm.1` | Нода: Xray-core, логи, автоперезапуск | этот файл |
 | 🎭 **selfsteal.sh** | `2.11.1` | Caddy-маскировка для Reality, 11 шаблонов сайтов | [README-selfsteal](./README-selfsteal.md) |
 | 🌐 **wtm.sh** | `1.5.2` | WARP + Tor: WireGuard-outbound для Xray, WARP+ | [README-warp](./README-warp.md) |
 | 🐦 **netbird.sh** | `1.4.2` | NetBird mesh-VPN: CLI / cloud-init / Ansible | [README-netbird](./README-netbird.md) |
@@ -279,7 +295,7 @@ remnanode xray_log_err    # ошибки Xray в реальном времени
 > редко.
 
 ```bash
-sudo bash <(curl -Ls https://github.com/DigneZzZ/remnawave-scripts/raw/main/remnanode.sh) @ install-script
+sudo bash <(curl -Ls https://raw.githubusercontent.com/magiasegura/remnawave-scripts-mihomo/feature/jolymmiles-xray/remnanode.sh) @ install-script
 # GitHub заблокирован? то же самое через зеркало:
 sudo bash <(curl -Ls https://cdn.jsdelivr.net/gh/DigneZzZ/remnawave-scripts@main/remnanode.sh) @ install-script
 ```

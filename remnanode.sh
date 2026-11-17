@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Version: 4.6.2
+# Version: 4.6.2-jm.1
 set -e
-SCRIPT_VERSION="4.6.2"
+SCRIPT_VERSION="4.6.2-jm.1"
 
 # Original invocation, captured before any shifting, so a self-update can
 # re-exec the new script with exactly the command the user typed.
@@ -29,8 +29,8 @@ fi
 # independent CDNs; it is only a fallback because a branch ref can be cached
 # there for up to ~12h, while raw.githubusercontent is always current.
 # ============================================
-SCRIPT_REPO="DigneZzZ/remnawave-scripts"
-SCRIPT_REF="main"
+SCRIPT_REPO="magiasegura/remnawave-scripts-mihomo"
+SCRIPT_REF="feature/jolymmiles-xray"
 SCRIPT_FILE="remnanode.sh"
 SCRIPT_URL="https://raw.githubusercontent.com/${SCRIPT_REPO}/${SCRIPT_REF}/${SCRIPT_FILE}"
 SCRIPT_URL_OVERRIDDEN="false"   # set by --source
@@ -631,8 +631,21 @@ xray_load_source() {
 xray_choose_source() {
     local choice
     while true; do
-        printf '\nXray source: %s\n1) XTLS/Xray-core\n2) Jolymmiles/Xray-core\nEnter) Keep current source\nQ) Cancel\n' "$XRAY_REPO"
-        read -r -p '> ' choice || return 1
+        clear
+        echo -e "\033[1;37m⚡ Xray-core Source\033[0m"
+        echo -e "\033[38;5;8m$(printf '─%.0s' $(seq 1 55))\033[0m"
+        echo
+        printf '   \033[38;5;15m%-15s\033[0m \033[38;5;117m%s\033[0m\n' 'Current source:' "$XRAY_REPO"
+        echo
+        echo -e "\033[1;37m🌐 Available Sources:\033[0m"
+        echo -e "   \033[38;5;15m1)\033[0m 📦 XTLS/Xray-core"
+        echo -e "   \033[38;5;15m2)\033[0m 📦 Jolymmiles/Xray-core"
+        echo
+        echo -e "   \033[38;5;15mEnter)\033[0m Keep current source"
+        echo -e "\033[38;5;8m$(printf '─%.0s' $(seq 1 55))\033[0m"
+        echo -e "   \033[38;5;15mQ)\033[0m 🔙 Cancel"
+        echo
+        read -r -p "$(echo -e "\033[1;37mSelect option [1-2, Enter, Q]:\033[0m ")" choice || return 1
         case "$choice" in
             1) XRAY_REPO=XTLS/Xray-core; return 0 ;;
             2) XRAY_REPO=Jolymmiles/Xray-core; return 0 ;;
@@ -1295,8 +1308,6 @@ get_remote_script_version() {
 # REMNANODE_SELFUPDATE_DONE guards against a re-exec loop if the installed copy
 # still reports an old version (different install path, read-only /usr/local/bin).
 ensure_latest_script() {
-    # Keep this local feature build until it is published to its own script source.
-    return 0
     local target_path="/usr/local/bin/$APP_NAME"
 
     [ "${REMNANODE_SELFUPDATE_DONE:-0}" = "1" ] && return 0
@@ -3551,7 +3562,7 @@ get_xray_core() {
         
         # Заголовок в монохромном стиле
         echo -e "\033[1;37m⚡ Xray-core Installer\033[0m \033[38;5;8mVersion Manager\033[0m \033[38;5;244mv$SCRIPT_VERSION\033[0m"
-        echo -e "\033[38;5;8m$(printf '─%.0s' $(seq 1 70))\033[0m"
+        echo -e "\033[38;5;8m$(printf '─%.0s' $(seq 1 55))\033[0m"
         echo
         
         # Текущая версия
@@ -3562,6 +3573,7 @@ get_xray_core() {
         echo -e "\033[1;37m🌐 Current Status:\033[0m"
         printf "   \033[38;5;15m%-15s\033[0m \033[38;5;250m%s\033[0m\n" "Xray Version:" "$current_version"
         printf "   \033[38;5;15m%-15s\033[0m \033[38;5;250m%s\033[0m\n" "Architecture:" "$ARCH"
+        printf "   \033[38;5;15m%-15s\033[0m \033[38;5;117m%s\033[0m\n" "Current source:" "$XRAY_REPO"
         
         # Показываем путь установки только если Xray примонтирован
         if is_xray_mounted; then
@@ -3608,14 +3620,16 @@ get_xray_core() {
             printf "   \033[38;5;15m%-3s\033[0m %s\n" "A:" "🧪 Show all releases (including pre-releases)"
         fi
         printf "   \033[38;5;15m%-3s\033[0m %s\n" "R:" "🔄 Refresh version list"
+        printf "   \033[38;5;15m%-3s\033[0m %s\n" "P:" "🌐 Choose source"
+        printf "   \033[38;5;15m%-3s\033[0m %s\n" "B:" "💾 Roll back last Xray backup"
         printf "   \033[38;5;15m%-3s\033[0m %s\n" "D:" "🏠 Restore to container default Xray"
         printf "   \033[38;5;15m%-3s\033[0m %s\n" "Q:" "❌ Quit installer"
         echo
         
-        echo -e "\033[38;5;8m$(printf '─%.0s' $(seq 1 70))\033[0m"
+        echo -e "\033[38;5;8m$(printf '─%.0s' $(seq 1 55))\033[0m"
         echo -e "\033[1;37m📖 Usage:\033[0m"
-        echo -e "   Choose a number \033[38;5;15m(1-${#versions[@]})\033[0m, \033[38;5;15mM\033[0m for manual, \033[38;5;15mA/S\033[0m to toggle releases, \033[38;5;15mD\033[0m to restore default, or \033[38;5;15mQ\033[0m to quit"
-        echo -e "\033[38;5;8m$(printf '─%.0s' $(seq 1 70))\033[0m"
+        echo -e "   Choose a number \033[38;5;15m(1-${#versions[@]})\033[0m, \033[38;5;15mM\033[0m for manual, \033[38;5;15mA/S\033[0m to toggle releases, \033[38;5;15mD\033[0m to restore default, \033[38;5;15mP\033[0m to choose source, \033[38;5;15mB\033[0m to roll back, or \033[38;5;15mQ\033[0m to quit"
+        echo -e "\033[38;5;8m$(printf '─%.0s' $(seq 1 55))\033[0m"
     }
     
     fetch_versions() {
@@ -3700,8 +3714,7 @@ get_xray_core() {
     
     while true; do
         print_menu
-        printf "Selected source: %s\nP: Choose source\nB: Roll back last Xray backup\n" "$XRAY_REPO"
-        echo -n -e "\033[1;37m> \033[0m"
+        echo -n -e "\033[1;37mSelect option [number, M, A/S, R, P, B, D, Q]:\033[0m "
         read choice
         
         if [[ "$choice" =~ ^[1-9][0-9]*$ ]] && [ "$choice" -le "${#versions[@]}" ]; then
@@ -3728,13 +3741,23 @@ get_xray_core() {
             versions=(); prereleases=()
             fetch_versions "$show_prereleases" || { show_prereleases=true; fetch_versions true || true; }
         elif [[ "$choice" = [Bb] ]]; then
-            read -r -p 'Restore last Xray backup and restart node? (y/n): ' confirm_rollback
+            clear
+            echo -e "\033[1;37m💾 Roll Back Xray Backup\033[0m"
+            echo -e "\033[38;5;8m$(printf '─%.0s' $(seq 1 55))\033[0m"
+            echo
+            echo -e "   \033[38;5;250mRestore the last Xray backup and restart the node.\033[0m"
+            echo
+            read -r -p "$(echo -e "\033[1;37mContinue? [y/N]:\033[0m ")" confirm_rollback
             if [[ "$confirm_rollback" = [Yy] ]]; then xray_rollback; exit $?; fi
         elif [ "$choice" == "M" ] || [ "$choice" == "m" ]; then
+            clear
+            echo -e "\033[1;37m📝 Manual Version Entry\033[0m"
+            echo -e "\033[38;5;8m$(printf '─%.0s' $(seq 1 55))\033[0m"
             echo
-            echo -e "\033[1;37m📝 Manual Version Entry:\033[0m"
+            printf '   \033[38;5;15m%-15s\033[0m \033[38;5;117m%s\033[0m\n' 'Current source:' "$XRAY_REPO"
+            echo
             while true; do
-                echo -n -e "\033[38;5;8mEnter version (e.g., v1.8.4): \033[0m"
+                echo -n -e "\033[1;37mEnter version (e.g., v1.8.4):\033[0m "
                 read custom_version
                 
                 if [ -z "$custom_version" ]; then
@@ -3802,7 +3825,7 @@ get_xray_core() {
         else
             echo
             echo -e "\033[1;31m❌ Invalid choice: '$choice'\033[0m"
-            echo -e "\033[38;5;8m   Please enter a number between 1-${#versions[@]}, M for manual, A/S to toggle releases, R to refresh, D to restore default, or Q to quit.\033[0m"
+            echo -e "\033[38;5;8m   Please enter a number between 1-${#versions[@]}, M for manual, A/S to toggle releases, R to refresh, P to choose source, B to roll back, D to restore default, or Q to quit.\033[0m"
             echo
             echo -n -e "\033[38;5;8mPress Enter to continue...\033[0m"
             read

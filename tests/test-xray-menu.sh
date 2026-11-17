@@ -23,6 +23,13 @@ for script in remnanode.sh remnanode-xray-update.sh; do
     fi
     clear() { :; }
     colorized_echo() { echo "$2"; }
+    XRAY_REPO=Jolymmiles/Xray-core
+    printf '\n' | xray_choose_source > "$sandbox/source-menu"
+    grep -Fq $'\033[1;37m⚡ Xray-core Source\033[0m' "$sandbox/source-menu"
+    grep -Fq $'\033[38;5;117mJolymmiles/Xray-core\033[0m' "$sandbox/source-menu"
+    grep -Fq $'   \033[38;5;15m1)\033[0m ' "$sandbox/source-menu"
+    grep -Fq $'   \033[38;5;15mQ)\033[0m ' "$sandbox/source-menu"
+    echo "PASS: $script source menu uses the CLI colors and indentation"
     identify_the_operating_system_and_architecture() { ARCH=64; }
     get_current_xray_core_version() { echo 'Not installed'; return 1; }
     is_xray_mounted() { return 1; }
@@ -41,10 +48,15 @@ for script in remnanode.sh remnanode-xray-update.sh; do
     }
     printf '\np\n2\n1\n' | (get_xray_core) > "$sandbox/menu"
     [ "$(cat "$sandbox/result")" = 'Jolymmiles/Xray-core v1.2.3' ]
+    grep -Fq $'   \033[38;5;15mP: \033[0m ' "$sandbox/menu"
+    grep -Fq $'   \033[38;5;15mB: \033[0m ' "$sandbox/menu"
+    grep -Fq $'\033[38;5;117mJolymmiles/Xray-core\033[0m' "$sandbox/menu"
+    ! grep -q '^Selected source:\|^P: Choose source\|^B: Roll back' "$sandbox/menu"
     grep -q 'Jolymmiles/Xray-core/releases?per_page=100' "$sandbox/requests"
     echo "PASS: $script source switch and numbered version use selected repository"
     printf '1\nm\nv1.2.3\n' | (get_xray_core) > "$sandbox/menu"
     [ "$(cat "$sandbox/result")" = 'XTLS/Xray-core v1.2.3' ]
+    grep -Fq 'Manual Version Entry' "$sandbox/menu"
     echo "PASS: $script manual tag validation uses selected source"
     printf '\na\n2\ny\n' | (get_xray_core) > "$sandbox/menu"
     [ "$(cat "$sandbox/result")" = 'XTLS/Xray-core v2.0.0-beta' ]
@@ -54,6 +66,7 @@ for script in remnanode.sh remnanode-xray-update.sh; do
     offline=true
     printf '\nb\ny\n' | (get_xray_core) > "$sandbox/menu"
     [ "$(cat "$sandbox/result")" = rollback ]
+    grep -Fq 'Roll Back Xray Backup' "$sandbox/menu"
     echo "PASS: $script rollback menu remains available when GitHub is offline"
     offline=false
 done

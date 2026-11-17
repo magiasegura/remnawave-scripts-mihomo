@@ -1,5 +1,5 @@
 #!/bin/bash
-# Version: 1.0.0
+# Version: 1.0.0-jm.1
 set -e
 # RemnaNode Xray-core Updater
 # Created by DigneZzZ
@@ -128,8 +128,21 @@ xray_load_source() {
 xray_choose_source() {
     local choice
     while true; do
-        printf '\nXray source: %s\n1) XTLS/Xray-core\n2) Jolymmiles/Xray-core\nEnter) Keep current source\nQ) Cancel\n' "$XRAY_REPO"
-        read -r -p '> ' choice || return 1
+        clear
+        echo -e "\033[1;37m⚡ Xray-core Source\033[0m"
+        echo -e "\033[38;5;8m$(printf '─%.0s' $(seq 1 55))\033[0m"
+        echo
+        printf '   \033[38;5;15m%-15s\033[0m \033[38;5;117m%s\033[0m\n' 'Current source:' "$XRAY_REPO"
+        echo
+        echo -e "\033[1;37m🌐 Available Sources:\033[0m"
+        echo -e "   \033[38;5;15m1)\033[0m 📦 XTLS/Xray-core"
+        echo -e "   \033[38;5;15m2)\033[0m 📦 Jolymmiles/Xray-core"
+        echo
+        echo -e "   \033[38;5;15mEnter)\033[0m Keep current source"
+        echo -e "\033[38;5;8m$(printf '─%.0s' $(seq 1 55))\033[0m"
+        echo -e "   \033[38;5;15mQ)\033[0m 🔙 Cancel"
+        echo
+        read -r -p "$(echo -e "\033[1;37mSelect option [1-2, Enter, Q]:\033[0m ")" choice || return 1
         case "$choice" in
             1) XRAY_REPO=XTLS/Xray-core; return 0 ;;
             2) XRAY_REPO=Jolymmiles/Xray-core; return 0 ;;
@@ -442,13 +455,14 @@ print_menu() {
     clear
     
     echo -e "\033[1;37m⚡ Xray-core Installer for RemnaNode\033[0m"
-    echo -e "\033[38;5;8m$(printf '─%.0s' $(seq 1 70))\033[0m"
+    echo -e "\033[38;5;8m$(printf '─%.0s' $(seq 1 55))\033[0m"
     echo
     
     current_version=$(get_current_xray_core_version || true)
     echo -e "\033[1;37m🌐 Current Status:\033[0m"
     printf "   \033[38;5;15m%-15s\033[0m \033[38;5;250m%s\033[0m\n" "Xray Version:" "$current_version"
     printf "   \033[38;5;15m%-15s\033[0m \033[38;5;250m%s\033[0m\n" "Architecture:" "$ARCH"
+    printf "   \033[38;5;15m%-15s\033[0m \033[38;5;117m%s\033[0m\n" "Current source:" "$XRAY_REPO"
     printf "   \033[38;5;15m%-15s\033[0m \033[38;5;250m%s\033[0m\n" "RemnaNode:" "$REMNANODE_DIR"
     echo
     
@@ -484,13 +498,15 @@ print_menu() {
         printf "   \033[38;5;15m%-3s\033[0m %s\n" "A:" "🧪 Show all releases (including pre-releases)"
     fi
     printf "   \033[38;5;15m%-3s\033[0m %s\n" "R:" "🔄 Refresh version list"
+    printf "   \033[38;5;15m%-3s\033[0m %s\n" "P:" "🌐 Choose source"
+    printf "   \033[38;5;15m%-3s\033[0m %s\n" "B:" "💾 Roll back last Xray backup"
     printf "   \033[38;5;15m%-3s\033[0m %s\n" "Q:" "❌ Exit installer"
     echo
     
-    echo -e "\033[38;5;8m$(printf '─%.0s' $(seq 1 70))\033[0m"
+    echo -e "\033[38;5;8m$(printf '─%.0s' $(seq 1 55))\033[0m"
     echo -e "\033[1;37m📖 Usage:\033[0m"
-    echo -e "   Select number \033[38;5;15m(1-${#versions[@]})\033[0m, \033[38;5;15mM\033[0m for manual input, \033[38;5;15mA/S\033[0m to toggle releases, or \033[38;5;15mQ\033[0m to exit"
-    echo -e "\033[38;5;8m$(printf '─%.0s' $(seq 1 70))\033[0m"
+    echo -e "   Select number \033[38;5;15m(1-${#versions[@]})\033[0m, \033[38;5;15mM\033[0m for manual input, \033[38;5;15mA/S\033[0m to toggle releases, \033[38;5;15mP\033[0m to choose source, \033[38;5;15mB\033[0m to roll back, or \033[38;5;15mQ\033[0m to exit"
+    echo -e "\033[38;5;8m$(printf '─%.0s' $(seq 1 55))\033[0m"
 }
 
 # Интерактивный выбор и загрузка Xray-core
@@ -514,8 +530,7 @@ get_xray_core() {
     
     while true; do
         print_menu
-        printf "Selected source: %s\nP: Choose source\nB: Roll back last Xray backup\n" "$XRAY_REPO"
-        echo -n -e "\033[1;37m> \033[0m"
+        echo -n -e "\033[1;37mSelect option [number, M, A/S, R, P, B, Q]:\033[0m "
         read choice
         
         if [[ "$choice" =~ ^[1-9][0-9]*$ ]] && [ "$choice" -le "${#versions[@]}" ]; then
@@ -542,13 +557,23 @@ get_xray_core() {
             versions=(); prereleases=()
             fetch_versions "$show_prereleases" || { show_prereleases=true; fetch_versions true || true; }
         elif [[ "$choice" = [Bb] ]]; then
-            read -r -p 'Restore last Xray backup and restart node? (y/n): ' confirm_rollback
+            clear
+            echo -e "\033[1;37m💾 Roll Back Xray Backup\033[0m"
+            echo -e "\033[38;5;8m$(printf '─%.0s' $(seq 1 55))\033[0m"
+            echo
+            echo -e "   \033[38;5;250mRestore the last Xray backup and restart the node.\033[0m"
+            echo
+            read -r -p "$(echo -e "\033[1;37mContinue? [y/N]:\033[0m ")" confirm_rollback
             if [[ "$confirm_rollback" = [Yy] ]]; then xray_rollback; exit $?; fi
         elif [ "$choice" == "M" ] || [ "$choice" == "m" ]; then
+            clear
+            echo -e "\033[1;37m📝 Manual Version Entry\033[0m"
+            echo -e "\033[38;5;8m$(printf '─%.0s' $(seq 1 55))\033[0m"
             echo
-            colorized_echo blue "📝 Manual version input:"
+            printf '   \033[38;5;15m%-15s\033[0m \033[38;5;117m%s\033[0m\n' 'Current source:' "$XRAY_REPO"
+            echo
             while true; do
-                echo -n -e "\033[38;5;8mEnter version (e.g., v1.8.4): \033[0m"
+                echo -n -e "\033[1;37mEnter version (e.g., v1.8.4):\033[0m "
                 read custom_version
                 
                 if [ -z "$custom_version" ]; then

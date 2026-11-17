@@ -26,6 +26,10 @@ Blocks: `managed-files`, `caddyfile-template`, `caddy-safety`, `caddyfile-migrat
 
 ## Suites
 
+`test-script-update.sh` checks delivery from this repository, version comparison,
+argument preservation on re-exec, offline/invalid downloads, and custom sources.
+It stubs network access and installs into a temporary directory.
+
 | Suite | Covers |
 |---|---|
 | `test-managed-files.sh` | ownership marker, sha256 sidecar, backup rotation, the guarded-write decision table |

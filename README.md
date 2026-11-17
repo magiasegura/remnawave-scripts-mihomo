@@ -6,9 +6,19 @@ to the existing `remnanode` menu, with a saved source, backups and rollback.
 
 ## Upgrade an existing installation
 
+After migration, the CLI checks this repository for newer versions when opening
+the menu. Run `sudo remnanode install-script` to refresh only the CLI, then reopen
+the menu. This command does not update containers. For custom node names, use
+that node's command instead of `remnanode`.
+
 No node reinstall is required. Obtain `remnanode.sh` from this repository on
-`feature/jolymmiles-xray`. This repository is private; upstream download commands
-do not install this version. From your local checkout, upload the file:
+`feature/jolymmiles-xray`. Download it from this public repository:
+
+```bash
+curl -fSL https://raw.githubusercontent.com/magiasegura/remnawave-scripts-mihomo/feature/jolymmiles-xray/remnanode.sh -o remnanode.sh
+```
+
+From your local checkout, upload the file:
 
 ```bash
 scp ./remnanode.sh USER@SERVER:/tmp/remnanode-joly.sh
@@ -78,7 +88,7 @@ instructions above to switch an existing node to this branch.
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
 [![Shell](https://img.shields.io/badge/language-Bash-blue.svg)](#)
 [![remnawave.sh](https://img.shields.io/badge/remnawave.sh-6.8.0-blue.svg)](#-remnawave-panel)
-[![remnanode.sh](https://img.shields.io/badge/remnanode.sh-4.6.2-blue.svg)](#-remnanode)
+[![remnanode.sh](https://img.shields.io/badge/remnanode.sh-4.6.2-jm.1-blue.svg)](#-remnanode)
 [![Panel](https://img.shields.io/badge/Remnawave_Panel-3.4.x_ready-brightgreen.svg)](#)
 [![Localization](https://img.shields.io/badge/🌐-EN_|_RU-green.svg)](./README_RU.md)
 
@@ -104,7 +114,7 @@ One-liner installs and a full-featured CLI for **Remnawave Panel**, **RemnaNode*
 bash <(curl -Ls https://github.com/DigneZzZ/remnawave-scripts/raw/main/remnawave.sh) @ install
 
 # RemnaNode
-bash <(curl -Ls https://github.com/DigneZzZ/remnawave-scripts/raw/main/remnanode.sh) @ install
+bash <(curl -Ls https://raw.githubusercontent.com/magiasegura/remnawave-scripts-mihomo/feature/jolymmiles-xray/remnanode.sh) @ install
 
 # Caddy Selfsteal — Reality masking
 bash <(curl -Ls https://github.com/DigneZzZ/remnawave-scripts/raw/main/selfsteal.sh) @ install
@@ -130,7 +140,7 @@ After installation each script is a global command: `remnawave`, `remnanode`, `s
 | Script | Version | Purpose | Docs |
 |---|---|---|---|
 | 🚀 **remnawave.sh** | `6.8.0` | Panel: install, Caddy, backups, subscription-page | this file |
-| 🛰 **remnanode.sh** | `4.6.2` | Node: Xray-core, logs, auto-restart | this file |
+| 🛰 **remnanode.sh** | `4.6.2-jm.1` | Node: Xray-core, logs, auto-restart | this file |
 | 🎭 **selfsteal.sh** | `2.11.1` | Caddy masking for Reality, 11 website templates | [README-selfsteal](./README-selfsteal.md) |
 | 🌐 **wtm.sh** | `1.5.2` | WARP + Tor: WireGuard outbound for Xray, WARP+ | [README-warp](./README-warp.md) |
 | 🐦 **netbird.sh** | `2.0.0` | NetBird mesh VPN: CLI / cloud-init / Ansible | [README-netbird](./README-netbird.md) |
@@ -265,7 +275,7 @@ Refresh the CLI with `sudo remnanode install-script`, then run `sudo remnanode c
 > node container. `update` refreshes the CLI on its own first, so you rarely need this by hand.
 
 ```bash
-sudo bash <(curl -Ls https://github.com/DigneZzZ/remnawave-scripts/raw/main/remnanode.sh) @ install-script
+sudo bash <(curl -Ls https://raw.githubusercontent.com/magiasegura/remnawave-scripts-mihomo/feature/jolymmiles-xray/remnanode.sh) @ install-script
 # GitHub blocked? same thing via a mirror:
 sudo bash <(curl -Ls https://cdn.jsdelivr.net/gh/DigneZzZ/remnawave-scripts@main/remnanode.sh) @ install-script
 ```
