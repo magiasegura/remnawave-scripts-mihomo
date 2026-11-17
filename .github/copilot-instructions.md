@@ -1,5 +1,21 @@
 # Copilot Instructions for remnawave-scripts
 
+## Fork maintenance
+
+This repository is `magiasegura/remnawave-scripts-mihomo`; the default release
+branch is `feature/jolymmiles-xray`. The repository information and main-branch
+examples below describe the original upstream project.
+
+- Keep fork releases in the form `<upstream-version>-jm.<revision>`.
+- Keep script delivery pointed at this repository and its release branch.
+- Preserve Xray source selection, snapshots, rollback and live-core checks.
+- Use `scripts/merge-upstream.py` on a separate clean branch to merge upstream.
+- Never replace our scripts wholesale with upstream copies or resolve code
+  conflicts by accepting an entire side. Resolve the conflicting code and run
+  `bash tests/run-tests.sh` on Linux before merging the PR.
+- Author new commits as the repository owner, `magiasegura`, using the owner's
+  GitHub noreply email. Do not change authorship of existing upstream commits.
+
 > **Related docs:** [bash.instructions.md](instructions/bash.instructions.md) | [docs.instructions.md](instructions/docs.instructions.md) | [project.context.md](../docs/project.context.md)
 
 ## Repository Info

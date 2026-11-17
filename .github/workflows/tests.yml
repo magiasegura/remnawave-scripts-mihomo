@@ -1,0 +1,25 @@
+name: Tests
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  shell-tests:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Validate changed entrypoints and helpers
+        run: |
+          bash -n remnanode.sh
+          bash -n remnanode-xray-update.sh
+          bash -n tests/test-upstream-sync.sh
+      - name: Run all suites on Linux
+        run: bash tests/run-tests.sh

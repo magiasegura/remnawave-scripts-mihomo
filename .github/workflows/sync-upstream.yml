@@ -1,0 +1,96 @@
+name: Sync upstream
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '30 6 * * *'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sync-upstream
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    outputs:
+      changed: ${{ steps.merge.outputs.changed }}
+      branch: ${{ steps.merge.outputs.branch }}
+      commit: ${{ steps.merge.outputs.commit }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          fetch-depth: 0
+      - name: Merge upstream without discarding fork changes
+        id: merge
+        env:
+          REPO_OWNER: ${{ github.repository_owner }}
+          REPO_OWNER_ID: ${{ github.repository_owner_id }}
+        run: |
+          set -euo pipefail
+          git config user.name "$REPO_OWNER"
+          git config user.email "${REPO_OWNER_ID}+${REPO_OWNER}@users.noreply.github.com"
+          git fetch --no-tags https://github.com/DigneZzZ/remnawave-scripts.git main:refs/remotes/upstream/main
+          if git merge-base --is-ancestor upstream/main HEAD; then
+            echo 'changed=false' >> "$GITHUB_OUTPUT"
+            echo 'Upstream is already included.' >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          branch="sync/upstream-$(git rev-parse --short=12 upstream/main)-$(git rev-parse --short=8 HEAD)"
+          if git ls-remote --exit-code origin "refs/heads/$branch" > /dev/null; then
+            git fetch origin "$branch"
+            git checkout --detach FETCH_HEAD
+          else
+            git checkout -b "$branch"
+            if ! python3 scripts/merge-upstream.py upstream/main; then
+              echo 'Upstream merge needs manual conflict resolution. No release was replaced.' >> "$GITHUB_STEP_SUMMARY"
+              git diff --name-only --diff-filter=U >> "$GITHUB_STEP_SUMMARY"
+              exit 1
+            fi
+            git push origin "HEAD:refs/heads/$branch"
+          fi
+          echo 'changed=true' >> "$GITHUB_OUTPUT"
+          echo "branch=$branch" >> "$GITHUB_OUTPUT"
+          echo "commit=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+  test:
+    needs: prepare
+    if: needs.prepare.outputs.changed == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ needs.prepare.outputs.commit }}
+          persist-credentials: false
+      - run: bash -n remnanode.sh && bash -n remnanode-xray-update.sh
+      - run: bash tests/run-tests.sh
+
+  pull-request:
+    needs: [prepare, test]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      pull-requests: write
+    steps:
+      - name: Open a reviewed update path
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          BASE_BRANCH: ${{ github.event.repository.default_branch }}
+          SYNC_BRANCH: ${{ needs.prepare.outputs.branch }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          if [ -n "$(gh pr list --head "$SYNC_BRANCH" --base "$BASE_BRANCH" --json number --jq '.[].number')" ]; then
+            exit 0
+          fi
+          printf 'Merged DigneZzZ upstream while retaining fork features and jm release numbering.\n\nAll shell suites passed on Linux: %s\n\nReview the diff before merging.\n' "$RUN_URL" > /tmp/upstream-pr.md
+          gh pr create --base "$BASE_BRANCH" --head "$SYNC_BRANCH" \
+            --title 'Sync DigneZzZ upstream' --body-file /tmp/upstream-pr.md

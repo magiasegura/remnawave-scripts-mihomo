@@ -30,6 +30,10 @@ Blocks: `managed-files`, `caddyfile-template`, `caddy-safety`, `caddyfile-migrat
 argument preservation on re-exec, offline/invalid downloads, and custom sources.
 It stubs network access and installs into a temporary directory.
 
+`test-upstream-sync.sh` runs Python standard-library tests against temporary Git
+repositories. It verifies feature preservation, jm revision increments, upstream
+version changes, rejection of code conflicts and protection of a dirty checkout.
+
 | Suite | Covers |
 |---|---|
 | `test-managed-files.sh` | ownership marker, sha256 sidecar, backup rotation, the guarded-write decision table |
