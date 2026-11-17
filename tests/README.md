@@ -68,6 +68,10 @@ staging failures, installation, complete snapshots, rollback, locking and contai
 Both suites use temporary directories and stub network/container operations; no server is contacted.
 See [the feature README](../README-xray-sources.md) for usage and limitations.
 
+`test-xray-directory.sh` reproduces empty bind-mount directories in place of the
+binary/geodata, verifies installation and rollback, and checks that non-empty
+directories and the last complete backup survive a rejected update.
+
 `test-xray-compose.sh` covers service isolation, restart policies, replacement,
 builtin restore and safe rejection of unsupported YAML. `test-xray-health.sh`
 covers live-process hashes, mount mismatch and container health. The complete

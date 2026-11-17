@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Version: 4.6.2-jm.1
+# Version: 4.6.2-jm.2
 set -e
-SCRIPT_VERSION="4.6.2-jm.1"
+SCRIPT_VERSION="4.6.2-jm.2"
 
 # Original invocation, captured before any shifting, so a self-update can
 # re-exec the new script with exactly the command the user typed.
@@ -669,12 +669,21 @@ xray_validate_version() {
 }
 
 xray_backup() {
-    local snapshot file
+    local snapshot file contents
     mkdir -p "$DATA_DIR/xray-backups" || return 1
     chmod 700 "$DATA_DIR/xray-backups" || return 1
     snapshot=$(mktemp -d "$DATA_DIR/xray-backups/$(date -u +%Y%m%dT%H%M%SZ).XXXXXX") || return 1
     for file in xray geoip.dat geosite.dat xray-source xray-version; do
-        if [ -e "$DATA_DIR/$file" ]; then cp -p "$DATA_DIR/$file" "$snapshot/$file" || return 1; fi
+        if [ -d "$DATA_DIR/$file" ]; then
+            contents=$(find "$DATA_DIR/$file" -mindepth 1 -maxdepth 1 -print -quit) || return 1
+            if [ -L "$DATA_DIR/$file" ] || [ -n "$contents" ]; then
+                echo "Expected a file at $DATA_DIR/$file; this is not an empty directory. Inspect and move it aside manually before retrying." >&2
+                return 1
+            fi
+            cp -a "$DATA_DIR/$file" "$snapshot/$file" || return 1
+        elif [ -e "$DATA_DIR/$file" ]; then
+            cp -p "$DATA_DIR/$file" "$snapshot/$file" || return 1
+        fi
     done
     if [ -f "$COMPOSE_FILE" ]; then cp -p "$COMPOSE_FILE" "$snapshot/compose" || return 1; fi
     touch "$snapshot/complete" || return 1
@@ -687,11 +696,15 @@ xray_restore() {
     local snapshot="$1" file temporary
     [ -f "$snapshot/complete" ] || { echo 'Incomplete Xray backup' >&2; return 1; }
     for file in xray geoip.dat geosite.dat xray-source xray-version; do
-        if [ -f "$snapshot/$file" ]; then
+        if [ -d "$DATA_DIR/$file" ]; then rmdir "$DATA_DIR/$file" || return 1; fi
+        if [ -d "$snapshot/$file" ]; then
+            rm -f "$DATA_DIR/$file" || return 1
+            cp -a "$snapshot/$file" "$DATA_DIR/$file" || return 1
+        elif [ -f "$snapshot/$file" ]; then
             # Rename the executable: overwriting a running ELF can fail with ETXTBSY.
             if [ "$file" = xray ]; then
                 temporary=$(mktemp "$DATA_DIR/.xray-restore.XXXXXX") || return 1
-                if ! cp -p "$snapshot/$file" "$temporary" || ! mv -f "$temporary" "$DATA_DIR/$file"; then
+                if ! cp -p "$snapshot/$file" "$temporary" || ! mv -fT "$temporary" "$DATA_DIR/$file"; then
                     rm -f "$temporary"
                     return 1
                 fi
@@ -877,7 +890,10 @@ xray_install_release() {
     xray_backup || return 1
     for file in xray geoip.dat geosite.dat; do
         # A fork may omit geodata; retain the installed databases in that case.
-        if [ -f "$XRAY_STAGE/$file" ]; then mv -f "$XRAY_STAGE/$file" "$DATA_DIR/$file" || return 1; fi
+        if [ -f "$XRAY_STAGE/$file" ]; then
+            if [ -d "$DATA_DIR/$file" ]; then rmdir "$DATA_DIR/$file" || return 1; fi
+            mv -fT "$XRAY_STAGE/$file" "$DATA_DIR/$file" || return 1
+        fi
     done
     printf '%s\n' "$XRAY_REPO" > "$DATA_DIR/xray-source" || return 1
     printf '%s\n' "$version" > "$DATA_DIR/xray-version" || return 1
