@@ -5,39 +5,62 @@
 `remnanode`, сохраняет источник и позволяет восстановить ядро из резервной копии.
 Ветка с реализацией: `feature/jolymmiles-xray`.
 
-## Переход без переустановки ноды
+## Переход с оригинального скрипта без переустановки ноды
 
-Нужно заменить только файл управляющего скрипта `/usr/local/bin/remnanode`. Контейнер,
-ключи и настройки при этой замене сохраняются. При последующем переключении ядра нода перезапустится, и соединения ненадолго прервутся.
+Все команды ниже выполняйте **на сервере с установленной нодой**, подключившись
+по SSH. Нужны `bash`, `curl` и `sudo` с правами root. Закройте старое меню
+`remnanode`, выбрав `0`, чтобы оно не продолжало работать со старым кодом.
 
-1. Возьмите `remnanode.sh` из ветки `feature/jolymmiles-xray` этого репозитория.
-   Если у вас уже есть локальный клон, выполните в его каталоге
-   `git pull --ff-only origin feature/jolymmiles-xray`, находясь на этой ветке.
-   Либо скачайте файл на своём компьютере из публичного репозитория:
-
-```bash
-curl -fSL https://raw.githubusercontent.com/magiasegura/remnawave-scripts-mihomo/feature/jolymmiles-xray/remnanode.sh -o remnanode.sh
-```
-2. Передайте файл на сервер. Выполните эту команду на своём компьютере из каталога проекта:
+1. Скопируйте и выполните весь блок ниже. Для обычной установки оставьте
+   `node_name=remnanode`. Если нода называется, например, `node2`, замените эту
+   строку на `node_name=node2`. Файл команды должен находиться в
+   `/usr/local/bin/<имя-ноды>`; проверить путь можно через `command -v remnanode`
+   или `command -v node2`.
 
 ```bash
-scp ./remnanode.sh USER@SERVER:/tmp/remnanode-joly.sh
+(
+  set -e
+  node_name=remnanode
+  target="/usr/local/bin/$node_name"
+  test -f "$target"
+  sudo -v
+
+  downloaded=$(mktemp)
+  trap 'rm -f "$downloaded"' EXIT
+  curl -fSL --connect-timeout 15 --max-time 120 \
+    https://raw.githubusercontent.com/magiasegura/remnawave-scripts-mihomo/feature/jolymmiles-xray/remnanode.sh \
+    -o "$downloaded"
+  bash -n "$downloaded"
+  grep -Eq '^SCRIPT_VERSION="[0-9]+\.[0-9]+\.[0-9]+-jm\.[0-9]+"$' "$downloaded"
+  grep -Fxq 'SCRIPT_REPO="magiasegura/remnawave-scripts-mihomo"' "$downloaded"
+
+  backup="$target.backup.$(date +%Y%m%d-%H%M%S)"
+  sudo cp -a "$target" "$backup"
+  sudo install -m 0755 "$downloaded" "$target"
+  printf 'Previous CLI saved at: %s\n' "$backup"
+  sudo "$target" version
+)
 ```
 
-3. Закройте открытое меню `remnanode`. На сервере проверьте файл,
-   сохраните копию старого скрипта и установите новый:
+Блок скачивает нашу версию во временный файл, проверяет синтаксис, суффикс `jm`
+и источник обновлений, сохраняет старый CLI и только затем заменяет его.
+При ошибке скачивания или проверки замена не выполняется. Меняется только
+управляющий скрипт: контейнер, ядро Xray, ключи и настройки сохраняются;
+нода при переходе не перезапускается. Не запускайте `install` для этого перехода.
+
+2. Сохраните путь после `Previous CLI saved at`. В конце должна появиться
+   версия с суффиксом `-jm.`, например `4.6.2-jm.1`.
+
+3. Откройте уже установленное новое меню:
 
 ```bash
-backup="/usr/local/bin/remnanode.backup.$(date +%Y%m%d-%H%M%S)"
-bash -n /tmp/remnanode-joly.sh &&
-sudo cp -a /usr/local/bin/remnanode "$backup" &&
-sudo install -m 0755 /tmp/remnanode-joly.sh /usr/local/bin/remnanode &&
-printf 'Старая версия скрипта: %s\n' "$backup"
+sudo /usr/local/bin/remnanode
 ```
 
-Сохраните путь к резервной копии, который выведет команда. Команды рассчитаны на стандартную
-установку с именем `remnanode`. Если команда ноды называется иначе, используйте
-её имя и соответствующий файл в `/usr/local/bin`.
+Для имени `node2` используйте `sudo /usr/local/bin/node2`.
+Теперь можно выбрать пункт `11` для обновления Xray и источник `2` для Jolymmiles.
+Это отдельная операция: при замене ядра нода перезапустится, и соединения
+ненадолго прервутся. Для одного лишь перехода на наш CLI обновлять ядро не нужно.
 
 ## Обновление скрипта
 
@@ -45,12 +68,21 @@ printf 'Старая версия скрипта: %s\n' "$backup"
 репозитория при открытии меню. Для принудительного обновления только скрипта:
 
 ```bash
-sudo remnanode install-script
+sudo /usr/local/bin/remnanode install-script
+sudo /usr/local/bin/remnanode version
 ```
 
 Закройте старое меню и запустите `sudo remnanode` снова.
-Контейнеры эта команда не обновляет. Для нестандартного имени ноды используйте
-её команду вместо `remnanode`.
+Контейнеры эта команда не обновляет. Для ноды с именем `node2` явно передайте `--name`, чтобы обновить её CLI:
+
+```bash
+sudo /usr/local/bin/node2 install-script --name node2
+sudo /usr/local/bin/node2 version
+sudo /usr/local/bin/node2
+```
+
+Оригинальный скрипт сначала нужно заменить по инструкции выше: его команда
+`install-script` по-прежнему скачивает оригинал.
 
 ## Выбор форка из меню
 
@@ -70,17 +102,20 @@ sudo remnanode core-update
 
 `sudo remnanode update` обновляет образ RemnaNode, а `core-update` обновляет Xray.
 После обновления образа внешнее ядро останется подключённым, если его монтирование сохранено. Совместимость новой ноды с установленной версией форка проверяйте отдельно.
-Автообновление управляющего скрипта в этой ветке отключено. Чтобы обновить сам скрипт,
-снова замените его файлом из этого репозитория; оригинальный `install-script`
-скачивает upstream-версию и может убрать выбор форка.
+Наш CLI получает обновления из этого репозитория. Обновление только CLI описано
+в разделе «Обновление скрипта» выше.
 
 Для отката ядра выберите `B` в `core-update`. Перед заменой сохраняются ядро,
 geodata, источник, тег и Compose. При ошибке обновления скрипт попытается автоматически восстановить прежние файлы. Чтобы вернуть старый управляющий скрипт,
-укажите сохранённый путь к копии. В той же SSH-сессии можно выполнить:
+подставьте путь после `Previous CLI saved at` вместо примера ниже:
 
 ```bash
-sudo cp -a "$backup" /usr/local/bin/remnanode
+sudo cp -a /usr/local/bin/remnanode.backup.YYYYMMDD-HHMMSS /usr/local/bin/remnanode
+sudo /usr/local/bin/remnanode version
 ```
+
+Для ноды со своим именем замените оба пути в команде отката на пути её CLI
+и сохранённой копии.
 
 ## Проверки и ограничения
 
@@ -97,8 +132,9 @@ sudo cp -a "$backup" /usr/local/bin/remnanode
 
 ## Оригинальная документация DigneZzZ
 
-Команды установки ниже относятся к upstream DigneZzZ и скачивают его версию.
-Для перехода на эту ветку используйте инструкцию выше.
+Ниже сохранена документация DigneZzZ. Ссылки для RemnaNode ведут на наш форк;
+остальные скрипты скачиваются из upstream. Для перехода уже установленной ноды
+используйте пошаговую инструкцию выше.
 
 <div align="center">
 
@@ -297,7 +333,7 @@ remnanode xray_log_err    # ошибки Xray в реальном времени
 ```bash
 sudo bash <(curl -Ls https://raw.githubusercontent.com/magiasegura/remnawave-scripts-mihomo/feature/jolymmiles-xray/remnanode.sh) @ install-script
 # GitHub заблокирован? то же самое через зеркало:
-sudo bash <(curl -Ls https://cdn.jsdelivr.net/gh/DigneZzZ/remnawave-scripts@main/remnanode.sh) @ install-script
+sudo bash <(curl -Ls https://cdn.jsdelivr.net/gh/magiasegura/remnawave-scripts-mihomo@feature/jolymmiles-xray/remnanode.sh) @ install-script
 ```
 
 ```text

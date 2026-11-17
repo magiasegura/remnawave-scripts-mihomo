@@ -4,40 +4,84 @@ Based on [DigneZzZ/remnawave-scripts](https://github.com/DigneZzZ/remnawave-scri
 Branch `feature/jolymmiles-xray` adds `XTLS/Xray-core` and `Jolymmiles/Xray-core`
 to the existing `remnanode` menu, with a saved source, backups and rollback.
 
-## Upgrade an existing installation
+## Switch from the original script without reinstalling the node
 
-After migration, the CLI checks this repository for newer versions when opening
-the menu. Run `sudo remnanode install-script` to refresh only the CLI, then reopen
-the menu. This command does not update containers. For custom node names, use
-that node's command instead of `remnanode`.
+Run these commands **on the server with the existing node**, over SSH.
+You need `bash`, `curl` and `sudo` with root access. Exit the old `remnanode` menu
+with `0` before replacing the CLI.
 
-No node reinstall is required. Obtain `remnanode.sh` from this repository on
-`feature/jolymmiles-xray`. Download it from this public repository:
-
-```bash
-curl -fSL https://raw.githubusercontent.com/magiasegura/remnawave-scripts-mihomo/feature/jolymmiles-xray/remnanode.sh -o remnanode.sh
-```
-
-From your local checkout, upload the file:
+1. Run the entire block below. Keep `node_name=remnanode` for a standard install.
+   For a custom name such as `node2`, change that line to `node_name=node2`.
+   The existing CLI must be at `/usr/local/bin/<node-name>`; check with
+   `command -v remnanode` or `command -v node2`.
 
 ```bash
-scp ./remnanode.sh USER@SERVER:/tmp/remnanode-joly.sh
+(
+  set -e
+  node_name=remnanode
+  target="/usr/local/bin/$node_name"
+  test -f "$target"
+  sudo -v
+
+  downloaded=$(mktemp)
+  trap 'rm -f "$downloaded"' EXIT
+  curl -fSL --connect-timeout 15 --max-time 120 \
+    https://raw.githubusercontent.com/magiasegura/remnawave-scripts-mihomo/feature/jolymmiles-xray/remnanode.sh \
+    -o "$downloaded"
+  bash -n "$downloaded"
+  grep -Eq '^SCRIPT_VERSION="[0-9]+\.[0-9]+\.[0-9]+-jm\.[0-9]+"$' "$downloaded"
+  grep -Fxq 'SCRIPT_REPO="magiasegura/remnawave-scripts-mihomo"' "$downloaded"
+
+  backup="$target.backup.$(date +%Y%m%d-%H%M%S)"
+  sudo cp -a "$target" "$backup"
+  sudo install -m 0755 "$downloaded" "$target"
+  printf 'Previous CLI saved at: %s\n' "$backup"
+  sudo "$target" version
+)
 ```
 
-Close any running `remnanode` menu. On the server, validate and back up the old
-CLI before replacing it:
+The block downloads to a temporary file, checks Bash syntax, the `jm` suffix and
+our update source, backs up the old CLI and then replaces it. A download or
+validation failure stops before replacement. Only the CLI changes: the container,
+Xray binary, keys and configuration remain in place, and the node is not restarted.
+Do not run `install` for this migration.
+
+2. Save the path printed after `Previous CLI saved at`. The final output should
+   show a version with the `-jm.` suffix, for example `4.6.2-jm.1`.
+
+3. Open the newly installed menu:
 
 ```bash
-backup="/usr/local/bin/remnanode.backup.$(date +%Y%m%d-%H%M%S)"
-bash -n /tmp/remnanode-joly.sh &&
-sudo cp -a /usr/local/bin/remnanode "$backup" &&
-sudo install -m 0755 /tmp/remnanode-joly.sh /usr/local/bin/remnanode &&
-printf 'Previous CLI saved at: %s\n' "$backup"
+sudo /usr/local/bin/remnanode
 ```
 
-Save the printed backup path. These commands assume the default installation
-name `remnanode`; adapt the CLI path for a custom node name. Replacing this file
-preserves the node container, keys and configuration and does not restart it.
+For `node2`, use `sudo /usr/local/bin/node2`. Choose option `11` and source `2`
+for Jolymmiles when you want to update Xray. Replacing the core is a separate
+operation that restarts the node and briefly interrupts connections. It is not
+required just to switch to our CLI.
+
+## Update the CLI later
+
+Newer CLI releases are installed from this repository when opening the menu.
+To refresh only the CLI manually, then reopen the menu:
+
+```bash
+sudo /usr/local/bin/remnanode install-script
+sudo /usr/local/bin/remnanode version
+sudo /usr/local/bin/remnanode
+```
+
+For a custom node name, pass `--name` explicitly:
+
+```bash
+sudo /usr/local/bin/node2 install-script --name node2
+sudo /usr/local/bin/node2 version
+sudo /usr/local/bin/node2
+```
+
+These commands do not update containers or Xray. An original upstream CLI must
+first be replaced using the migration above; its `install-script` still downloads
+upstream.
 
 ## Select a core and update the node
 
@@ -52,16 +96,21 @@ Menu options: `P` changes source, `M` enters a tag, `A/S` toggles pre-releases,
 `sudo remnanode update` updates the node image. `core-update` updates Xray.
 An external core remains mounted when that mount is preserved during node
 updates; compatibility with a newer node version must be checked separately.
-CLI auto-update is disabled in this branch. To update the CLI, repeat the file
-replacement from this repository. Upstream `install-script` can overwrite it.
+Our CLI receives its updates from this repository. See "Update the CLI later"
+above to refresh the CLI without updating containers.
 
 Core snapshots contain the binary, geodata, source, tag and Compose file.
 Failed updates attempt automatic recovery; use `B` for manual core rollback.
-To restore the previous CLI in the same SSH session:
+To restore the previous CLI, substitute the saved path printed after
+`Previous CLI saved at` for the example below:
 
 ```bash
-sudo cp -a "$backup" /usr/local/bin/remnanode
+sudo cp -a /usr/local/bin/remnanode.backup.YYYYMMDD-HHMMSS /usr/local/bin/remnanode
+sudo /usr/local/bin/remnanode version
 ```
+
+For a custom node name, use its CLI path and saved backup path in the rollback
+command.
 
 ## Validation
 
@@ -78,8 +127,9 @@ Real Linux/Docker and client traffic have not been tested; use a test node first
 
 ## Original DigneZzZ documentation
 
-The installation commands below download upstream DigneZzZ scripts. Use the
-instructions above to switch an existing node to this branch.
+The original documentation is retained below. RemnaNode download links point
+to our fork; other scripts still come from upstream. For an existing node, use
+the step-by-step migration above.
 
 <div align="center">
 
@@ -277,7 +327,7 @@ Refresh the CLI with `sudo remnanode install-script`, then run `sudo remnanode c
 ```bash
 sudo bash <(curl -Ls https://raw.githubusercontent.com/magiasegura/remnawave-scripts-mihomo/feature/jolymmiles-xray/remnanode.sh) @ install-script
 # GitHub blocked? same thing via a mirror:
-sudo bash <(curl -Ls https://cdn.jsdelivr.net/gh/DigneZzZ/remnawave-scripts@main/remnanode.sh) @ install-script
+sudo bash <(curl -Ls https://cdn.jsdelivr.net/gh/magiasegura/remnawave-scripts-mihomo@feature/jolymmiles-xray/remnanode.sh) @ install-script
 ```
 
 ```text
