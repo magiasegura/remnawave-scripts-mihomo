@@ -3,6 +3,7 @@
 import re
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 
@@ -18,6 +19,14 @@ def version(text, path):
     if not match:
         raise ValueError(f"Missing version in {path}")
     return match.group(1)
+
+
+def readme_version(text, release):
+    lines = text.splitlines(keepends=True)
+    for i, line in enumerate(lines):
+        if line.startswith('[![remnanode.sh]') or (line.startswith('|') and '**remnanode.sh**' in line):
+            lines[i] = re.sub(r'\d+\.\d+\.\d+(?:-jm\.\d+)?', release, line, count=1)
+    return ''.join(lines)
 
 
 def main():
@@ -42,12 +51,29 @@ def main():
         revision = int(fork[2]) + 1 if original == fork[1] else 1
         releases[path] = current, f"{original}-jm.{revision}"
 
+    base = git("merge-base", "HEAD", upstream).stdout.strip()
+    base_version = version(git("show", f"{base}:remnanode.sh").stdout, "remnanode.sh")
     merged = git("-c", "merge.conflictStyle=merge", "merge", "--no-ff", "--no-commit", upstream, check=False)
     conflicts = git("diff", "--name-only", "--diff-filter=U").stdout.splitlines()
     if merged.returncode and not conflicts:
         raise ValueError(merged.stderr)
     # Resolve only version lines. Changes to executable code always need review.
     for path in conflicts:
+        if path in ("README.md", "README_RU.md"):
+            # Remove only our version overlay, then let Git merge all document content.
+            with tempfile.TemporaryDirectory() as directory:
+                files = [Path(directory) / name for name in ('ours', 'base', 'theirs')]
+                for file, stage in zip(files, (2, 1, 3)):
+                    text = git('show', f':{stage}:{path}').stdout
+                    if stage == 2:
+                        text = readme_version(text, base_version)
+                    file.write_text(text, encoding='utf-8', newline='\n')
+                result = git('merge-file', '-p', *(str(file) for file in files), check=False)
+                if result.returncode == 0:
+                    text = readme_version(result.stdout, releases['remnanode.sh'][0])
+                    Path(path).write_text(text, encoding='utf-8', newline='\n')
+                    git('add', '--', path)
+            continue
         if path not in releases:
             continue
         text = Path(path).read_text(encoding="utf-8")

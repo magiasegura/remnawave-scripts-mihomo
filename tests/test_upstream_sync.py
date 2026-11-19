@@ -21,11 +21,21 @@ class UpstreamSyncTest(unittest.TestCase):
         main += "\n# stable context\n" * 6 + 'echo original\n' + "\n# stable context\n" * 6
         self.write("remnanode.sh", main)
         self.write("remnanode-xray-update.sh", "#!/bin/bash\n# Version: 1.0.0\necho updater\n")
+        readme = '# Original docs\n' + '\n# stable heading\n' * 6
+        readme += '[![remnanode.sh](https://img.shields.io/badge/remnanode.sh-4.6.2-blue.svg)](#node)\n'
+        readme += '[![selfsteal.sh](https://img.shields.io/badge/selfsteal.sh-2.11.1-blue.svg)](#caddy)\n'
+        readme += '\n# stable badges\n' * 6
+        readme += '| **remnanode.sh** | `4.6.2` | Node |\n| **selfsteal.sh** | `2.11.1` | Caddy |\n'
+        readme += '\n# stable docs\n' * 6 + 'Instructions: original\n'
+        for path in ("README.md", "README_RU.md"):
+            self.write(path, readme)
         self.git("add", ".")
         self.git("commit", "-m", "Original")
         self.git("checkout", "-b", "fork")
         self.write("remnanode.sh", main.replace("4.6.2", "4.6.2-jm.1") + "OUR_FEATURE=preserved\n")
         self.write("remnanode-xray-update.sh", "#!/bin/bash\n# Version: 1.0.0-jm.1\necho updater\n")
+        for path in ("README.md", "README_RU.md"):
+            self.write(path, '# Our migration instructions\n\n' + readme.replace('4.6.2', '4.6.2-jm.1'))
         self.git("commit", "-am", "Our features")
 
     def git(self, *args):
@@ -35,10 +45,13 @@ class UpstreamSyncTest(unittest.TestCase):
     def write(self, path, text):
         (self.root / path).write_text(text, encoding="utf-8", newline="\n")
 
-    def update_original(self, version="4.6.2", output="updated"):
+    def update_original(self, version="4.6.2", output="updated", instructions="original"):
         self.git("checkout", "original")
         path = self.root / "remnanode.sh"
         self.write(path.name, path.read_text().replace("4.6.2", version).replace("echo original", f"echo {output}"))
+        for name in ("README.md", "README_RU.md"):
+            text = (self.root / name).read_text()
+            self.write(name, text.replace('4.6.2', version).replace('2.11.1', '2.11.2').replace('Instructions: original', f'Instructions: {instructions}'))
         self.git("commit", "-am", "Upstream update")
         self.git("checkout", "fork")
 
@@ -54,6 +67,14 @@ class UpstreamSyncTest(unittest.TestCase):
         self.assertIn("OUR_FEATURE=preserved", text)
         self.assertIn("echo updated", text)
         self.assertIn('SCRIPT_VERSION="4.6.2-jm.2"', text)
+        for path in ("README.md", "README_RU.md"):
+            readme = (self.root / path).read_text()
+            self.assertIn('# Our migration instructions', readme)
+            self.assertIn('`4.6.2-jm.2`', readme)
+            self.assertIn('`2.11.2`', readme)
+            self.assertIn('remnanode.sh-4.6.2-jm.2-blue', readme)
+            self.assertIn('selfsteal.sh-2.11.2-blue', readme)
+            self.assertNotIn('<<<<<<<', readme)
         self.assertEqual(self.git("status", "--porcelain"), "")
         head = self.git("rev-parse", "HEAD")
         self.assertEqual(self.sync().returncode, 0)
@@ -66,6 +87,17 @@ class UpstreamSyncTest(unittest.TestCase):
         text = (self.root / "remnanode.sh").read_text()
         self.assertIn('SCRIPT_VERSION="4.6.3-jm.1"', text)
         self.assertIn("OUR_FEATURE=preserved", text)
+        self.assertIn('`4.6.3-jm.1`', (self.root / 'README.md').read_text())
+
+    def test_readme_content_conflicts_need_manual_review(self):
+        path = self.root / 'README.md'
+        self.write(path.name, path.read_text().replace('Instructions: original', 'Instructions: ours'))
+        self.git('commit', '-am', 'Our instruction changes')
+        self.update_original(instructions='theirs')
+        result = self.sync()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('README.md', result.stderr)
+        self.assertIn('README.md', self.git('diff', '--name-only', '--diff-filter=U'))
 
     def test_code_conflicts_need_manual_review(self):
         path = self.root / "remnanode.sh"

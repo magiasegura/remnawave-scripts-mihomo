@@ -33,6 +33,8 @@ It stubs network access and installs into a temporary directory.
 `test-upstream-sync.sh` runs Python standard-library tests against temporary Git
 repositories. It verifies feature preservation, jm revision increments, upstream
 version changes, rejection of code conflicts and protection of a dirty checkout.
+README fixtures also cover adjacent upstream release updates, badges, preservation
+of our migration instructions, and rejection of conflicting instruction changes.
 
 | Suite | Covers |
 |---|---|
