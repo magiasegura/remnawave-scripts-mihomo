@@ -194,15 +194,26 @@ echo 'PASS: CLI documents DNS options and rejects a missing credentials path'
 load_function configure_dns01_command
 clear() { :; }
 rm "$APP_DIR/.dns01-credentials"
-ACME_DNS_PROVIDER='' ACME_DNS_CREDENTIALS=''
-configure_dns01_command <<< "$(printf '%s\ny\n' "$sandbox/cloudflare.env")" > "$sandbox/menu" 2>&1
+ACME_DNS_PROVIDER='' ACME_DNS_CREDENTIALS="$sandbox/cloudflare.env"
+rm "$ACME_DNS_CREDENTIALS"
+configure_dns01_command <<< "$(printf 'fixture-token\n0123456789abcdef0123456789abcdef\ny\n')" > "$sandbox/menu" 2>&1
 [ "$ACME_DNS_PROVIDER" = cloudflare ]
 [ "$ACME_DNS_CREDENTIALS" = "$sandbox/cloudflare.env" ]
+grep -qx 'CF_Token=fixture-token' "$ACME_DNS_CREDENTIALS"
+grep -qx 'CF_Zone_ID=0123456789abcdef0123456789abcdef' "$ACME_DNS_CREDENTIALS"
+# Windows Git Bash does not expose POSIX permissions; Linux CI checks the real mode.
+if [ "$(uname -s)" = Linux ]; then [ "$(command stat -c %a "$ACME_DNS_CREDENTIALS")" = 600 ]; fi
 ! grep -q fixture-token "$sandbox/menu"
 before=$(wc -l < "$CALLS")
+cp "$ACME_DNS_CREDENTIALS" "$sandbox/credentials-before"
+if configure_dns01_command <<< $'replacement-token\ninvalid-zone\ny' > "$sandbox/menu" 2>&1; then echo 'FAIL: accepted invalid interactive credentials'; exit 1; fi
+cmp "$sandbox/credentials-before" "$ACME_DNS_CREDENTIALS"
+configure_dns01_command <<< $'replacement-token\n0123456789abcdef0123456789abcdef\nn' > "$sandbox/menu" 2>&1
+cmp "$sandbox/credentials-before" "$ACME_DNS_CREDENTIALS"
 configure_dns01_command <<< q > "$sandbox/menu" 2>&1
 [ "$(wc -l < "$CALLS")" = "$before" ]
-echo 'PASS: interactive DNS setup saves the selected file, refreshes state, and supports cancellation'
+configure_dns01_command <<< $'\ny' > "$sandbox/menu" 2>&1
+echo 'PASS: interactive DNS setup creates private credentials, preserves them on invalid input/cancellation, and supports reuse'
 
 eval "$(awk '/^main_menu\(\) \{/ { inside=1 } inside { print } inside && /^}$/ { exit }' "$ROOT/selfsteal.sh")"
 report_nginx_version() { :; }

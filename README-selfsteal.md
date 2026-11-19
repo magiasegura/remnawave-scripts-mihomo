@@ -2,7 +2,7 @@
 
 # 🎭 Selfsteal — Caddy/Nginx для Reality
 
-[![Версия](https://img.shields.io/badge/selfsteal.sh-2.11.2-jm.2-blue.svg)](#-что-нового)
+[![Версия](https://img.shields.io/badge/selfsteal.sh-2.11.2-jm.3-blue.svg)](#-что-нового)
 [![Веб-сервер](https://img.shields.io/badge/Caddy_%7C_Nginx-supported-brightgreen.svg)](#-сравнение-caddy-vs-nginx)
 [![Шаблоны](https://img.shields.io/badge/шаблонов-11_AI--generated-purple.svg)](#-шаблоны-сайтов)
 [![Лицензия MIT](https://img.shields.io/badge/Лицензия-MIT-yellow.svg)](./LICENSE)
@@ -21,6 +21,7 @@
 
 | Версия | Главное |
 |---|---|
+| **2.11.2-jm.3** | Скрытый ввод токена и ввод Zone ID прямо в меню, автоматическое создание файла доступа с правами `600` |
 | **2.11.2-jm.2** | Настройка Cloudflare DNS-01 из меню Nginx: пункт 15, выбор файла доступа и отображение текущего статуса |
 | **2.11.2-jm.1** | Наш форк: Cloudflare DNS-01, отдельный закрытый файл токена, продление без остановки Nginx и восстановление прежних сертификатов при ошибке установки |
 | **2.11.2** | Новые установки используют `nginx:1.30.7-alpine` с исправлениями nginx2root. Меню и `selfsteal update` проверяют версию установленного NGINX. [Бюллетень NGINX](https://nginx.org/en/security_advisories.html) |
@@ -72,7 +73,7 @@ Cloudflare DNS API. Открывать входящие порты для про
 )
 ```
 
-В выводе должна быть версия `2.11.2-jm.2` или новее с суффиксом `jm`.
+В выводе должна быть версия `2.11.2-jm.3` или новее с суффиксом `jm`.
 Команда `install-script` устанавливает только CLI и печатает путь к его
 резервной копии. Сохраняются `.env`, Compose, конфигурация Nginx, сайт,
 сертификаты и задачи cron; контейнеры не перезапускаются. Для перехода с
@@ -88,14 +89,20 @@ sudo install -m 0755 /usr/local/bin/selfsteal.backup.DATE.SUFFIX /usr/local/bin/
 
 Последующие обновления `selfsteal update` получает из нашего репозитория.
 
-### 2. Создайте токен и файл доступа
+### 2. Создайте токен в Cloudflare
 
 Создайте Cloudflare API Token с правом **Zone → DNS → Edit**, ограниченным
 нужной зоной. Найдите Zone ID на странице зоны. Global API Key не требуется.
 [Инструкция acme.sh для Cloudflare](https://github.com/acmesh-official/acme.sh/wiki/dnsapi#1-cloudflare-option)
 и [создание токена Cloudflare](https://developers.cloudflare.com/fundamentals/api/get-started/create-token/).
 
-Создайте файл на хосте, вне каталогов сайта, SSL и контейнера:
+При настройке через меню файл вручную создавать не нужно: скрипт запросит
+токен и Zone ID и сохранит их в `/root/selfsteal-cloudflare.env` с правами
+`600`, доступными только root. При повторной настройке используется ранее
+сохранённый путь, если он отличается от стандартного.
+
+Если используете команду с `--dns-credentials` вместо меню, подготовьте файл
+вручную на хосте, вне каталогов сайта, SSL и контейнера:
 
 ```bash
 sudo install -o root -g root -m 0600 /dev/null /root/selfsteal-cloudflare.env
@@ -128,13 +135,14 @@ sudo chmod 600 /root/selfsteal-cloudflare.env
 sudo selfsteal --nginx
 ```
 
-Выберите **15 — Configure Cloudflare DNS-01**, укажите путь
-`/root/selfsteal-cloudflare.env` (Enter оставляет этот путь) и подтвердите
-включение буквой `y`. После успешной настройки меню покажет
+Выберите **15 — Configure Cloudflare DNS-01**, вставьте токен (символы ввода
+не отображаются), затем Zone ID и подтвердите включение буквой `y`.
+Файл доступа создаётся автоматически. Enter в поле токена использует уже
+сохранённый файл; `Q` отменяет ввод. После успешной настройки меню покажет
 `DNS-01: Cloudflare`.
 
 Если пункта 15 нет, закройте меню, выполните `sudo selfsteal --nginx update`
-и откройте его заново. Этот пункт доступен начиная с версии `2.11.2-jm.2`.
+и откройте его заново. Для ввода токена прямо в меню нужна версия `2.11.2-jm.3` или новее.
 Для оригинального скрипта сначала выполните переход из шага 1.
 
 То же действие одной командой:

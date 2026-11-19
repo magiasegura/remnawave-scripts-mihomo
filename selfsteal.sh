@@ -7,9 +7,9 @@
 # ║  Author:  DigneZzZ (https://github.com/DigneZzZ)               ║
 # ║  License: MIT                                                  ║
 # ╚════════════════════════════════════════════════════════════════╝
-# VERSION=2.11.2-jm.2
+# VERSION=2.11.2-jm.3
 
-SCRIPT_VERSION="2.11.2-jm.2"
+SCRIPT_VERSION="2.11.2-jm.3"
 
 # Handle @ prefix for consistency with other scripts
 if [ $# -gt 0 ] && [ "$1" = "@" ]; then
@@ -1231,27 +1231,46 @@ renew_dns_ssl_command() {
 }
 
 configure_dns01_command() {
+    set +x
     check_running_as_root
     if [ "$WEB_SERVER" != nginx ] || [ ! -f "$APP_DIR/.env" ] || [ ! -f "$APP_DIR/docker-compose.yml" ]; then
         log_error 'This menu requires an existing Nginx Selfsteal installation.'
         return 1
     fi
-    local credentials="${ACME_DNS_CREDENTIALS:-/root/selfsteal-cloudflare.env}" input confirm rc=0
+    local credentials="${ACME_DNS_CREDENTIALS:-/root/selfsteal-cloudflare.env}" token zone confirm rc=0
     clear
     echo -e "${WHITE}🌐 Cloudflare DNS-01${NC}"
     echo -e "${GRAY}$(printf '─%.0s' $(seq 1 40))${NC}"
     echo
-    echo -e "   ${GRAY}Prepare a root-owned file with permissions 600 containing:${NC}"
-    echo -e "   ${WHITE}CF_Token=...${NC}"
-    echo -e "   ${WHITE}CF_Zone_ID=...${NC}"
-    echo -e "   ${GRAY}Keep this file outside the Selfsteal installation directory.${NC}"
+    echo -e "   ${GRAY}Token permission: Zone > DNS > Edit, restricted to your zone.${NC}"
+    printf '   Credentials file: %s (root only, permissions 600)\n' "$credentials"
     echo
-    IFS= read -r -p "Credentials file [$credentials] (Q to cancel): " input || return 1
-    case "$input" in q|Q) return 0 ;; esac
-    credentials="${input:-$credentials}"
-    (load_cloudflare_credentials "$credentials") || return 1
+    IFS= read -r -s -p 'Cloudflare API Token (hidden; Enter to reuse saved token; Q to cancel): ' token || { echo; return 1; }
+    echo
+    case "$token" in q|Q) return 0 ;; esac
+    if [ -n "$token" ]; then
+        IFS= read -r -p 'Cloudflare Zone ID (Q to cancel): ' zone || return 1
+        case "$zone" in q|Q) return 0 ;; esac
+    else
+        (load_cloudflare_credentials "$credentials") || return 1
+    fi
     read -r -p 'Enable Cloudflare DNS-01 and automatic renewal? [y/N]: ' confirm || return 1
     case "$confirm" in y|Y) ;; *) return 0 ;; esac
+    if [ -n "$token" ]; then
+        (
+            umask 077
+            if [ -L "$credentials" ] || { [ -e "$credentials" ] && [ ! -f "$credentials" ]; }; then
+                log_error 'Credentials path must be a regular file, not a symlink or directory.'
+                exit 1
+            fi
+            temporary=$(mktemp "${credentials}.XXXXXX") || exit 1
+            trap 'rm -f "$temporary"' EXIT
+            printf 'CF_Token=%s\nCF_Zone_ID=%s\n' "$token" "$zone" > "$temporary" || exit 1
+            chmod 600 "$temporary" || exit 1
+            load_cloudflare_credentials "$temporary" || exit 1
+            mv -fT "$temporary" "$credentials" || exit 1
+        ) || return 1
+    fi
     (
         ACME_DNS_PROVIDER=cloudflare
         ACME_DNS_CREDENTIALS="$credentials"
