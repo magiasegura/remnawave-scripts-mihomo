@@ -7,9 +7,9 @@
 # ║  Author:  DigneZzZ (https://github.com/DigneZzZ)               ║
 # ║  License: MIT                                                  ║
 # ╚════════════════════════════════════════════════════════════════╝
-# VERSION=2.11.2
+# VERSION=2.11.2-jm.1
 
-SCRIPT_VERSION="2.11.2"
+SCRIPT_VERSION="2.11.2-jm.1"
 
 # Handle @ prefix for consistency with other scripts
 if [ $# -gt 0 ] && [ "$1" = "@" ]; then
@@ -18,7 +18,7 @@ fi
 
 # Debug mode - set via --debug flag
 DEBUG_MODE=false
-SCRIPT_URL="https://raw.githubusercontent.com/dignezzz/remnawave-scripts/main/selfsteal.sh"
+SCRIPT_URL="https://raw.githubusercontent.com/magiasegura/remnawave-scripts-mihomo/feature/jolymmiles-xray/selfsteal.sh"
 UPDATE_URL="$SCRIPT_URL"
 
 while [[ $# -gt 0 ]]; do
@@ -64,6 +64,8 @@ ACME_FALLBACK_PORTS=(8443 9443 10443 18443 28443)
 ACME_RESERVED_TLDS="local localdomain localhost lan home internal intranet corp private invalid test example onion arpa"
 # Set when the CA rejects something that retrying on another port cannot fix
 ACME_FATAL_ERROR=""
+ACME_DNS_PROVIDER=""
+ACME_DNS_CREDENTIALS=""
 
 # Force mode - skip DNS validation and interactive prompts
 FORCE_MODE=false
@@ -1073,8 +1075,168 @@ get_acme_tls_port() {
     return 0
 }
 
+# BEGIN SELFSTEAL DNS01
+load_cloudflare_credentials() {
+    set +x
+    local file="$1" permissions line token='' zone=''
+    if [ ! -f "$file" ] || [ -L "$file" ] || [ "$(stat -c %u "$file")" != 0 ]; then
+        printf 'Cloudflare credentials must be a regular root-owned file.\n' >&2
+        return 1
+    fi
+    local resolved installation
+    resolved=$(readlink -f "$file") || return 1
+    if [ -n "${APP_DIR:-}" ]; then
+        installation=$(readlink -f "$APP_DIR") || return 1
+        if [[ "$resolved" = "$installation/"* ]]; then
+            printf 'Keep Cloudflare credentials outside the Selfsteal installation directory.\n' >&2
+            return 1
+        fi
+    fi
+    permissions=$(stat -c %a "$file") || return 1
+    case "$permissions" in 600|400) ;; *) printf 'Cloudflare credentials require permissions 600 or 400.\n' >&2; return 1 ;; esac
+    while IFS= read -r line || [ -n "$line" ]; do
+        case "$line" in
+            ''|\#*) ;;
+            CF_Token=*) token=${line#*=} ;;
+            CF_Zone_ID=*) zone=${line#*=} ;;
+            *) printf 'Use only CF_Token and CF_Zone_ID assignments without quotes or export.\n' >&2; return 1 ;;
+        esac
+    done < "$file"
+    if ! [[ "$token" =~ ^[A-Za-z0-9_.-]+$ && "$zone" =~ ^[A-Fa-f0-9]{32}$ ]]; then
+        printf 'Cloudflare credentials need a valid CF_Token and 32-character CF_Zone_ID.\n' >&2
+        return 1
+    fi
+    export CF_Token="$token" CF_Zone_ID="$zone"
+}
+
+run_cloudflare_acme() {
+    (
+        set +x
+        umask 077
+        load_cloudflare_credentials "$ACME_DNS_CREDENTIALS" || exit 1
+        mkdir -p "$ACME_HOME" && chmod 700 "$ACME_HOME" || exit 1
+        local output="$ACME_HOME/selfsteal-dns.log" rc=0
+        touch "$output" && chmod 600 "$output" || exit 1
+        "$ACME_HOME/acme.sh" --home "$ACME_HOME" "$@" > "$output" 2>&1 || rc=$?
+        if [ "$rc" -ne 0 ] && [ "$rc" -ne 2 ]; then
+            printf 'DNS-01 failed. Private ACME log: %s\n' "$output" >&2
+        fi
+        exit "$rc"
+    )
+}
+
+update_cloudflare_certificate_files() {
+    (
+        local ssl_dir="$1" snapshot file rc=0
+        shift
+        umask 077
+        mkdir -p "$ssl_dir" || exit 1
+        snapshot=$(mktemp -d "$ssl_dir/.dns01-backup.XXXXXX") || exit 1
+        for file in private.key fullchain.crt; do
+            [ ! -L "$ssl_dir/$file" ] || { printf 'Certificate destinations must not be symlinks.\n' >&2; exit 1; }
+            if [ -e "$ssl_dir/$file" ]; then
+                [ -f "$ssl_dir/$file" ] && cp -p "$ssl_dir/$file" "$snapshot/$file" || exit 1
+            fi
+        done
+        trap 'rc=$?; restored=true; if [ "$rc" -ne 0 ] && [ "$rc" -ne 2 ]; then
+            for file in private.key fullchain.crt; do
+                if [ -f "$snapshot/$file" ]; then cp -p "$snapshot/$file" "$ssl_dir/$file" || restored=false; else rm -f "$ssl_dir/$file" || restored=false; fi
+            done
+        fi
+        if [ "$restored" = true ]; then rm -rf "$snapshot"; else printf "Certificate recovery failed; backup kept at %s\n" "$snapshot" >&2; fi
+        exit "$rc"' EXIT
+        run_cloudflare_acme "$@" || rc=$?
+        [ "$rc" -eq 0 ] || [ "$rc" -eq 2 ] || exit "$rc"
+        [ -s "$ssl_dir/private.key" ] && [ -s "$ssl_dir/fullchain.crt" ] || { printf 'Certificate files are missing after ACME update.\n' >&2; exit 1; }
+        chmod 600 "$ssl_dir/private.key" && chmod 644 "$ssl_dir/fullchain.crt" || exit 1
+        exit "$rc"
+    )
+}
+
+save_cloudflare_settings() {
+    local temporary credentials
+    credentials=$(readlink -f "$ACME_DNS_CREDENTIALS") || return 1
+    temporary=$(mktemp "$APP_DIR/.dns01-credentials.XXXXXX") || return 1
+    if ! printf '%s\n' "$credentials" > "$temporary" || ! chmod 600 "$temporary" ||
+        ! mv -fT "$temporary" "$APP_DIR/.dns01-credentials"; then
+        rm -f "$temporary"
+        return 1
+    fi
+}
+
+load_dns_settings() {
+    if [ -z "$ACME_DNS_CREDENTIALS" ] && [ -f "$APP_DIR/.dns01-credentials" ]; then
+        IFS= read -r ACME_DNS_CREDENTIALS < "$APP_DIR/.dns01-credentials" || return 1
+        ACME_DNS_PROVIDER=cloudflare
+    fi
+}
+
+issue_cloudflare_certificate() {
+    (
+        local domain="$1" ssl_dir="$2" reload_cmd
+        umask 077
+        [[ "$domain" =~ ^[A-Za-z0-9][A-Za-z0-9.-]*[A-Za-z0-9]$ ]] || { log_error 'DNS-01 requires a hostname, not a URL or wildcard'; exit 1; }
+        (load_cloudflare_credentials "$ACME_DNS_CREDENTIALS") || exit 1
+        ensure_cron_installed || exit 1
+        check_acme_installed || install_acme "$domain" || exit 1
+        ensure_valid_acme_account "$domain" || exit 1
+        mkdir -p "$ssl_dir" || exit 1
+        run_cloudflare_acme --issue --dns dns_cf -d "$domain" --server letsencrypt --keylength ec-256 --force || exit 1
+        if [ "$WEB_SERVER" = nginx ]; then
+            reload_cmd="if docker inspect --format '{{.State.Running}}' nginx-selfsteal 2>/dev/null | grep -qx true; then docker exec nginx-selfsteal nginx -t && docker exec nginx-selfsteal nginx -s reload; fi"
+        else
+            # Selfsteal disables Caddy's admin API, so renewed files require a restart.
+            reload_cmd="if docker inspect --format '{{.State.Running}}' caddy-selfsteal 2>/dev/null | grep -qx true; then docker restart caddy-selfsteal; fi"
+        fi
+        update_cloudflare_certificate_files "$ssl_dir" --install-cert --ecc -d "$domain" \
+            --key-file "$ssl_dir/private.key" --fullchain-file "$ssl_dir/fullchain.crt" --reloadcmd "$reload_cmd" || exit 1
+        save_cloudflare_settings || exit 1
+    )
+}
+
+setup_dns_auto_renewal() {
+    local domain="$1" wrapper="$APP_DIR/acme-renew.sh" temporary entries
+    temporary=$(mktemp "$APP_DIR/.acme-renew.XXXXXX") || return 1
+    {
+        printf '#!/usr/bin/env bash\nset -eu\n'
+        printf 'APP_DIR=%q\nACME_HOME=%q\nACME_DNS_CREDENTIALS=%q\n' "$APP_DIR" "$ACME_HOME" "$(readlink -f "$ACME_DNS_CREDENTIALS")"
+        declare -f load_cloudflare_credentials run_cloudflare_acme update_cloudflare_certificate_files
+        printf 'rc=0\nupdate_cloudflare_certificate_files "$APP_DIR/ssl" --renew --ecc -d %q || rc=$?\n[ "$rc" = 0 ] || [ "$rc" = 2 ]\n' "$domain"
+    } > "$temporary"
+    chmod 700 "$temporary" && mv -fT "$temporary" "$wrapper" || { rm -f "$temporary"; return 1; }
+    entries=$(crontab -l 2>/dev/null || true)
+    { printf '%s\n' "$entries" | grep -Fv "$wrapper" || true; printf '17 3 * * * %q\n' "$wrapper"; } | crontab -
+}
+
+renew_dns_ssl_command() {
+    local force="${1:-false}" domain rc=0
+    ensure_cron_installed || return 1
+    domain=$(sed -n 's/^SELF_STEAL_DOMAIN=//p' "$APP_DIR/.env") || return 1
+    [[ "$domain" =~ ^[A-Za-z0-9][A-Za-z0-9.-]*[A-Za-z0-9]$ ]] || { log_error 'Invalid domain in Selfsteal configuration'; return 1; }
+    if [ "$WEB_SERVER" = caddy ] && ! caddy_uses_manual_ssl; then
+        log_error 'For automatic-SSL Caddy, rerun install with --dns-cloudflare and --dns-credentials to configure the SSL mount.'
+        return 1
+    fi
+    if [ ! -f "$APP_DIR/.dns01-credentials" ]; then
+        issue_cloudflare_certificate "$domain" "$APP_DIR/ssl" || return 1
+    else
+        local args=(--renew --ecc -d "$domain")
+        [ "$force" != true ] || args+=(--force)
+        update_cloudflare_certificate_files "$APP_DIR/ssl" "${args[@]}" || rc=$?
+        [ "$rc" -eq 0 ] || [ "$rc" -eq 2 ] || return "$rc"
+        save_cloudflare_settings || return 1
+    fi
+    setup_dns_auto_renewal "$domain" || return 1
+    log_success 'Cloudflare DNS-01 certificate renewal completed'
+}
+# END SELFSTEAL DNS01
+
 # Issue SSL certificate for domain using TLS-ALPN
 issue_ssl_certificate() {
+    if [ "${ACME_DNS_PROVIDER:-}" = cloudflare ]; then
+        issue_cloudflare_certificate "$@"
+        return $?
+    fi
     local domain="$1"
     local ssl_dir="$2"
     local skip_reload="${3:-false}"  # Skip reload command during initial install
@@ -1748,8 +1910,8 @@ ARGS=()
 while [ $# -gt 0 ]; do
     case "$1" in
         --help|-h)
-            show_help
-            exit 0
+            COMMAND=help
+            shift
             ;;
         --version|-v)
             echo "Selfsteal Management Script v$SCRIPT_VERSION"
@@ -1771,6 +1933,19 @@ while [ $# -gt 0 ]; do
                 shift 2
             else
                 log_error "--acme-port requires a valid port number"
+                exit 1
+            fi
+            ;;
+        --dns-cloudflare)
+            ACME_DNS_PROVIDER=cloudflare
+            shift
+            ;;
+        --dns-credentials)
+            if [ -n "${2:-}" ] && [[ "$2" != -* ]]; then
+                ACME_DNS_CREDENTIALS="$2"
+                shift 2
+            else
+                log_error '--dns-credentials requires a path to a private Cloudflare credentials file'
                 exit 1
             fi
             ;;
@@ -1959,7 +2134,8 @@ get_server_ip() {
     ip="127.0.0.1"
     echo "${ip:-127.0.0.1}"
 }
-NODE_IP=$(get_server_ip)
+NODE_IP=127.0.0.1
+if [ "$COMMAND" != help ] && [ "$COMMAND" != install-script ]; then NODE_IP=$(get_server_ip); fi
 
 # Check if running as root
 check_running_as_root() {
@@ -2057,13 +2233,12 @@ check_system_requirements() {
         echo -e "${GREEN}✅ curl is available${NC}"
     fi
 
-    # cron: acme.sh (Nginx auto-SSL) won't install without crontab and keeps
-    # its renewal job there. Caddy and --ssl-cert installs don't need it.
-    if [ "$WEB_SERVER" = "nginx" ] && [ -z "$MANUAL_SSL_CERT" ]; then
+    # acme.sh needs cron for Nginx auto-SSL and Cloudflare DNS-01.
+    if { [ "$WEB_SERVER" = "nginx" ] && [ -z "$MANUAL_SSL_CERT" ]; } || [ "${ACME_DNS_PROVIDER:-}" = cloudflare ]; then
         if ensure_cron_installed; then
             echo -e "${GREEN}✅ cron is available (acme.sh auto-renewal)${NC}"
         else
-            echo -e "${RED}❌ cron is required by acme.sh for Nginx auto-SSL${NC}"
+            echo -e "${RED}❌ cron is required by acme.sh for automatic certificates${NC}"
             requirements_met=false
         fi
     fi
@@ -2324,6 +2499,7 @@ create_caddy_config() {
         use_manual_ssl=true
         ssl_source="Manual (wildcard certificate)"
     fi
+    if [ "${ACME_DNS_PROVIDER:-}" = cloudflare ]; then ssl_source='ACME DNS-01 (Cloudflare)'; fi
     
     # Create .env file
     cat > "$APP_DIR/.env" << EOF
@@ -2363,11 +2539,11 @@ EOF
         fi
         
         # Copy certificates to SSL directory
-        cp "$MANUAL_SSL_CERT" "$APP_DIR/ssl/fullchain.crt" || {
+        [ "$MANUAL_SSL_CERT" = "$APP_DIR/ssl/fullchain.crt" ] || cp "$MANUAL_SSL_CERT" "$APP_DIR/ssl/fullchain.crt" || {
             log_error "Failed to copy SSL certificate"
             return 1
         }
-        cp "$MANUAL_SSL_KEY" "$APP_DIR/ssl/private.key" || {
+        [ "$MANUAL_SSL_KEY" = "$APP_DIR/ssl/private.key" ] || cp "$MANUAL_SSL_KEY" "$APP_DIR/ssl/private.key" || {
             log_error "Failed to copy SSL key"
             return 1
         }
@@ -2657,6 +2833,7 @@ create_nginx_config() {
     if [ -n "$MANUAL_SSL_CERT" ] && [ -n "$MANUAL_SSL_KEY" ]; then
         ssl_source="Manual (wildcard certificate)"
     fi
+    if [ "${ACME_DNS_PROVIDER:-}" = cloudflare ]; then ssl_source='ACME DNS-01 (Cloudflare)'; fi
     
     cat > "$APP_DIR/.env" << EOF
 # Nginx for Reality Selfsteal Configuration
@@ -2708,11 +2885,11 @@ EOF
         fi
         
         # Copy certificates to SSL directory
-        cp "$MANUAL_SSL_CERT" "$APP_DIR/ssl/fullchain.crt" || {
+        [ "$MANUAL_SSL_CERT" = "$APP_DIR/ssl/fullchain.crt" ] || cp "$MANUAL_SSL_CERT" "$APP_DIR/ssl/fullchain.crt" || {
             log_error "Failed to copy SSL certificate"
             return 1
         }
-        cp "$MANUAL_SSL_KEY" "$APP_DIR/ssl/private.key" || {
+        [ "$MANUAL_SSL_KEY" = "$APP_DIR/ssl/private.key" ] || cp "$MANUAL_SSL_KEY" "$APP_DIR/ssl/private.key" || {
             log_error "Failed to copy SSL key"
             return 1
         }
@@ -3121,6 +3298,9 @@ EOF
 # Install function
 install_command() {
     check_running_as_root
+    if [ "${ACME_DNS_PROVIDER:-}" = cloudflare ]; then
+        (load_cloudflare_credentials "$ACME_DNS_CREDENTIALS") || return 1
+    fi
     
     # Validate force mode requirements
     if [ "$FORCE_MODE" = true ] && [ -z "$FORCE_DOMAIN" ]; then
@@ -3309,6 +3489,11 @@ install_command() {
                 log_error "Domain cannot be empty!"
                 continue
             fi
+            if [ "${ACME_DNS_PROVIDER:-}" = cloudflare ]; then
+                skip_dns_check=true
+                log_info 'DNS-01 verifies TXT records; an A/AAAA match with this server is not required.'
+                break
+            fi
             
             echo
             echo -e "${WHITE}🔍 DNS Validation Options:${NC}"
@@ -3405,7 +3590,9 @@ install_command() {
     fi
     
     # Show manual SSL certificate info if provided
-    if [ -n "$MANUAL_SSL_CERT" ] && [ -n "$MANUAL_SSL_KEY" ]; then
+    if [ "${ACME_DNS_PROVIDER:-}" = cloudflare ]; then
+        printf "   ${WHITE}%-20s${NC} ${CYAN}%s${NC}\n" "SSL Certificate:" "DNS-01 (Cloudflare)"
+    elif [ -n "$MANUAL_SSL_CERT" ] && [ -n "$MANUAL_SSL_KEY" ]; then
         printf "   ${WHITE}%-20s${NC} ${CYAN}%s${NC}\n" "SSL Certificate:" "Manual (wildcard)"
     fi
     
@@ -3438,11 +3625,17 @@ install_command() {
     echo -e "${WHITE}⚙️  Creating Configuration Files${NC}"
     echo -e "${GRAY}$(printf '─%.0s' $(seq 1 40))${NC}"
 
-    if [ "$WEB_SERVER" = "nginx" ]; then
-        create_nginx_config "$domain" "$port"
-    else
-        create_caddy_config "$domain" "$port"
+    if [ "${ACME_DNS_PROVIDER:-}" = cloudflare ]; then
+        issue_cloudflare_certificate "$domain" "$APP_DIR/ssl" true || return 1
+        MANUAL_SSL_CERT="$APP_DIR/ssl/fullchain.crt"
+        MANUAL_SSL_KEY="$APP_DIR/ssl/private.key"
     fi
+    if [ "$WEB_SERVER" = "nginx" ]; then
+        create_nginx_config "$domain" "$port" || return 1
+    else
+        create_caddy_config "$domain" "$port" || return 1
+    fi
+    if [ "${ACME_DNS_PROVIDER:-}" = cloudflare ]; then setup_dns_auto_renewal "$domain" || return 1; fi
     # Install random template instead of default HTML
     echo
     echo -e "${WHITE}🎨 Installing Template${NC}"
@@ -4401,51 +4594,49 @@ template_command() {
 
 
 install_management_script() {
-    log_info "Installing Management Script"
-    
-    local script_path=""
-    local target_path="/usr/local/bin/$APP_NAME"
-    
-    # Проверим, не является ли источник тем же файлом, что и целевой
-    if [ -f "$0" ] && [ "$0" != "bash" ] && [ "$0" != "@" ]; then
-        local source_real_path
-        local target_real_path
-        source_real_path=$(realpath "$0" 2>/dev/null || readlink -f "$0" 2>/dev/null || echo "$0")
-        target_real_path=$(realpath "$target_path" 2>/dev/null || readlink -f "$target_path" 2>/dev/null || echo "$target_path")
-        
-        if [ "$source_real_path" = "$target_real_path" ]; then
-            log_success "Management script already installed: $target_path"
-            return 0
-        fi
-        
-        script_path="$0"
-    else
-        local temp_script="/tmp/selfsteal-install.sh"
-        if curl -fsSL "$UPDATE_URL" -o "$temp_script" 2>/dev/null; then
-            script_path="$temp_script"
-            echo -e "${GRAY}📥 Downloaded script from remote source${NC}"
-        else
-            log_warning "Could not install management script automatically"
-            echo -e "${GRAY}   You can download it manually from: $UPDATE_URL${NC}"
+    local target_path="/usr/local/bin/$APP_NAME" script_path="$0" downloaded='' prepared backup
+    log_info "Installing management script without changing web server settings..."
+    mkdir -p /usr/local/bin || return 1
+    if [ ! -f "$script_path" ]; then
+        downloaded=$(mktemp "${TMPDIR:-/tmp}/selfsteal-install.XXXXXX") || return 1
+        if ! curl -fsSL --connect-timeout 15 --max-time 120 "$UPDATE_URL" -o "$downloaded"; then
+            rm -f "$downloaded"
             return 1
         fi
+        script_path="$downloaded"
     fi
-    
-    if [ -f "$script_path" ]; then
-        if cp "$script_path" "$target_path" 2>/dev/null; then
-            chmod +x "$target_path"
-            log_success "Management script installed: $target_path"
-        else
-            log_warning "Management script installation skipped (already exists)"
-        fi
-        
-        if [ "$script_path" = "/tmp/selfsteal-install.sh" ]; then
-            rm -f "$script_path"
-        fi
-    else
-        log_error "Failed to install management script"
+    if ! bash -n "$script_path" || ! grep -Eq '^SCRIPT_VERSION="[0-9]+\.[0-9]+\.[0-9]+-jm\.[0-9]+"$' "$script_path"; then
+        [ -z "$downloaded" ] || rm -f "$downloaded"
+        log_error 'Refusing to install an invalid Selfsteal fork script'
         return 1
     fi
+    if [ "$(readlink -f "$script_path")" = "$(readlink -f "$target_path")" ]; then
+        log_success "Management script already installed: $target_path"
+        return 0
+    fi
+    if [ -e "$target_path" ] && [ ! -f "$target_path" ]; then
+        [ -z "$downloaded" ] || rm -f "$downloaded"
+        log_error "CLI destination is not a regular file: $target_path"
+        return 1
+    fi
+    prepared=$(mktemp "/usr/local/bin/.selfsteal-install.XXXXXX") || { [ -z "$downloaded" ] || rm -f "$downloaded"; return 1; }
+    if ! install -m 0755 "$script_path" "$prepared"; then
+        rm -f "$prepared"; [ -z "$downloaded" ] || rm -f "$downloaded"; return 1
+    fi
+    if [ -f "$target_path" ]; then
+        backup=$(mktemp "${target_path}.backup.$(date +%Y%m%d-%H%M%S).XXXXXX") || {
+            rm -f "$prepared"; [ -z "$downloaded" ] || rm -f "$downloaded"; return 1;
+        }
+        if ! cp -p "$target_path" "$backup"; then
+            rm -f "$prepared"; [ -z "$downloaded" ] || rm -f "$downloaded"; return 1
+        fi
+        printf 'Previous CLI saved at: %s\n' "$backup"
+    fi
+    if ! mv -fT "$prepared" "$target_path"; then
+        rm -f "$prepared"; [ -z "$downloaded" ] || rm -f "$downloaded"; return 1
+    fi
+    [ -z "$downloaded" ] || rm -f "$downloaded"
+    log_success "Management script installed: $target_path"
 }
 # Service management functions
 up_command() {
@@ -4673,6 +4864,10 @@ renew_ssl_command() {
     if [ ! -d "$APP_DIR" ]; then
         log_error "$WEB_SERVER is not installed"
         return 1
+    fi
+    if [ "${ACME_DNS_PROVIDER:-}" = cloudflare ]; then
+        renew_dns_ssl_command
+        return $?
     fi
     
     # Caddy manages certificates itself; "renew" here means force a re-issue.
@@ -5066,6 +5261,11 @@ reissue_caddy_cert() {
 # real exit code propagates to the caller.
 reissue_cert_command() {
     local rc=0
+    if [ "${ACME_DNS_PROVIDER:-}" = cloudflare ]; then
+        check_running_as_root
+        renew_dns_ssl_command true || rc=$?
+        return "$rc"
+    fi
     if [ "$WEB_SERVER" = "nginx" ]; then
         # Nginx uses acme.sh; renew_ssl_command already exposes a force path.
         renew_ssl_command || rc=$?
@@ -5373,6 +5573,10 @@ show_help() {
     printf "   ${CYAN}%-22s${NC} %s\n" "--tcp" "Use TCP port instead of socket"
     printf "   ${CYAN}%-22s${NC} %s\n" "--acme-port <port>" "Custom port for ACME TLS-ALPN"
     echo
+    echo -e "${WHITE}DNS-01 Options (Caddy and Nginx):${NC}"
+    printf "   ${CYAN}%-22s${NC} %s\n" "--dns-cloudflare" "Issue and renew certificates through Cloudflare DNS"
+    printf "   ${CYAN}%-22s${NC} %s\n" "--dns-credentials <file>" "Root-owned credentials file with permissions 600"
+    echo
     echo -e "${WHITE}Force Install Options:${NC}"
     printf "   ${CYAN}%-22s${NC} %s\n" "--force, -f" "Skip DNS validation and prompts"
     printf "   ${CYAN}%-22s${NC} %s\n" "--domain <domain>" "Domain for installation"
@@ -5395,6 +5599,7 @@ show_help() {
     printf "   ${CYAN}%-12s${NC} %s\n" "edit" "✏️  Edit configuration files"
     printf "   ${CYAN}%-12s${NC} %s\n" "uninstall" "🗑️  Remove installation"
     printf "   ${CYAN}%-12s${NC} %s\n" "template" "🎨 Manage website templates"
+    printf "   ${CYAN}%-12s${NC} %s\n" "install-script" "Install only this CLI, preserving the existing server configuration"
     printf "   ${CYAN}%-12s${NC} %s\n" "renew-ssl" "🔐 Renew/re-issue SSL certificate"
     printf "   ${CYAN}%-12s${NC} %s\n" "reissue-cert" "🔐 Force a fresh SSL certificate now (Caddy)"
     printf "   ${CYAN}%-12s${NC} %s\n" "menu" "📋 Show interactive menu"
@@ -5975,9 +6180,25 @@ if [ "$COMMAND" != "install" ] && [ "$WEB_SERVER_EXPLICIT" = false ]; then
     detect_existing_installation
 fi
 
+if [ "$COMMAND" = help ]; then show_help; exit 0; fi
+if [ "$COMMAND" != install-script ]; then load_dns_settings; fi
+if [ "$ACME_DNS_PROVIDER" = cloudflare ] && [ -z "$ACME_DNS_CREDENTIALS" ]; then
+    log_error '--dns-cloudflare requires --dns-credentials for the first setup'
+    exit 1
+fi
+if [ -n "$ACME_DNS_CREDENTIALS" ] && [ "$ACME_DNS_PROVIDER" != cloudflare ]; then
+    log_error '--dns-credentials requires --dns-cloudflare'
+    exit 1
+fi
+if [ "$ACME_DNS_PROVIDER" = cloudflare ] && { [ -n "$MANUAL_SSL_CERT" ] || [ -n "$MANUAL_SSL_KEY" ] || [ -n "$ACME_PORT" ]; }; then
+    log_error 'DNS-01 cannot be combined with manual SSL files or --acme-port'
+    exit 1
+fi
+
 # Main execution
 case "$COMMAND" in
     install) install_command ;;
+    install-script) check_running_as_root; install_management_script ;;
     up) up_command ;;
     down) down_command ;;
     restart) restart_command ;;

@@ -9,6 +9,8 @@ examples below describe the original upstream project.
 - Keep fork releases in the form `<upstream-version>-jm.<revision>`.
 - Keep script delivery pointed at this repository and its release branch.
 - Preserve Xray source selection, snapshots, rollback and live-core checks.
+- Preserve Selfsteal Cloudflare DNS-01, private credential-file parsing and
+  certificate recovery. Keep Selfsteal delivery pointed at this fork.
 - Use `scripts/merge-upstream.py` on a separate clean branch to merge upstream.
 - Never replace our scripts wholesale with upstream copies or resolve code
   conflicts by accepting an entire side. Resolve the conflicting code and run

@@ -117,6 +117,39 @@ class UpstreamSyncTest(unittest.TestCase):
         self.assertNotEqual(self.sync().returncode, 0)
         self.assertEqual((self.root / "local-note").read_text(), "keep me")
 
+    def test_selfsteal_fork_keeps_dns_feature_and_its_release_number(self):
+        self.git('checkout', 'original')
+        script = '#!/bin/bash\n# VERSION=2.11.1\nSCRIPT_VERSION="2.11.1"\n'
+        script += '\n# stable selfsteal context\n' * 6 + 'echo upstream\n'
+        self.write('selfsteal.sh', script)
+        readme = '# Selfsteal\n' + '\n# stable context\n' * 6
+        readme += '[![Version](https://img.shields.io/badge/selfsteal.sh-2.11.1-blue.svg)](#version)\n'
+        self.write('README-selfsteal.md', readme)
+        self.git('add', '.')
+        self.git('commit', '-m', 'Add original Selfsteal')
+        self.git('checkout', 'fork')
+        self.git('merge', '--no-edit', 'original')
+        self.write('selfsteal.sh', script.replace('2.11.1', '2.11.1-jm.1') + 'OUR_DNS_FEATURE=preserved\n')
+        self.write('README-selfsteal.md', '# Our DNS instructions\n\n' + readme.replace('2.11.1', '2.11.1-jm.1'))
+        for path in ('README.md', 'README_RU.md'):
+            self.write(path, (self.root / path).read_text().replace('2.11.1', '2.11.1-jm.1'))
+        self.git('commit', '-am', 'Our DNS-01 feature')
+        self.git('checkout', 'original')
+        self.write('selfsteal.sh', script.replace('2.11.1', '2.11.2'))
+        self.write('README-selfsteal.md', readme.replace('2.11.1', '2.11.2'))
+        self.git('commit', '-am', 'Update upstream Selfsteal')
+        self.git('checkout', 'fork')
+        self.update_original()
+        result = self.sync()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        text = (self.root / 'selfsteal.sh').read_text()
+        self.assertIn('SCRIPT_VERSION="2.11.2-jm.1"', text)
+        self.assertIn('# VERSION=2.11.2-jm.1', text)
+        self.assertIn('OUR_DNS_FEATURE=preserved', text)
+        for path in ('README.md', 'README_RU.md', 'README-selfsteal.md'):
+            self.assertIn('selfsteal.sh-2.11.2-jm.1-blue', (self.root / path).read_text())
+        self.assertIn('# Our DNS instructions', (self.root / 'README-selfsteal.md').read_text())
+
 
 if __name__ == "__main__":
     unittest.main()

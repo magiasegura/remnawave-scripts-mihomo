@@ -35,6 +35,16 @@ repositories. It verifies feature preservation, jm revision increments, upstream
 version changes, rejection of code conflicts and protection of a dirty checkout.
 README fixtures also cover adjacent upstream release updates, badges, preservation
 of our migration instructions, and rejection of conflicting instruction changes.
+Selfsteal fork fixtures verify that upstream updates retain the DNS-01 feature
+and keep the Selfsteal `jm` release number and documentation metadata.
+
+`test-selfsteal-dns.sh` stubs acme.sh and cron to test Cloudflare DNS-01,
+root-only credentials, non-executable config parsing, certificate rollback,
+renewal/reissue dispatch and generated server configuration. It never contacts
+Cloudflare or an ACME CA and never starts or stops a container.
+
+`test-selfsteal-migration.sh` verifies CLI-only migration, original-script backup,
+unchanged configuration/site/certificate files, and rejection of an invalid CLI.
 
 | Suite | Covers |
 |---|---|

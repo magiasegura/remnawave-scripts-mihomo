@@ -14,17 +14,17 @@ def git(*args, check=True):
 
 
 def version(text, path):
-    pattern = r'^SCRIPT_VERSION="([^"]+)"$' if path == "remnanode.sh" else r"^# Version: (\S+)$"
+    pattern = r"^# Version: (\S+)$" if path == "remnanode-xray-update.sh" else r'^SCRIPT_VERSION="([^"]+)"$'
     match = re.search(pattern, text, re.M)
     if not match:
         raise ValueError(f"Missing version in {path}")
     return match.group(1)
 
 
-def readme_version(text, release):
+def readme_version(text, release, script="remnanode.sh"):
     lines = text.splitlines(keepends=True)
     for i, line in enumerate(lines):
-        if line.startswith('[![remnanode.sh]') or (line.startswith('|') and '**remnanode.sh**' in line):
+        if (line.startswith('[![') and script in line) or (line.startswith('|') and f'**{script}**' in line):
             lines[i] = re.sub(r'\d+\.\d+\.\d+(?:-jm\.\d+)?', release, line, count=1)
     return ''.join(lines)
 
@@ -40,7 +40,10 @@ def main():
         return
 
     releases = {}
-    for path in ("remnanode.sh", "remnanode-xray-update.sh"):
+    paths = ["remnanode.sh", "remnanode-xray-update.sh"]
+    if Path("selfsteal.sh").exists() and '-jm.' in version(Path("selfsteal.sh").read_text(encoding="utf-8"), "selfsteal.sh"):
+        paths.append("selfsteal.sh")
+    for path in paths:
         current = version(Path(path).read_text(encoding="utf-8"), path)
         original = version(git("show", f"{upstream}:{path}").stdout, path)
         fork = re.fullmatch(r"(\d+\.\d+\.\d+)-jm\.(\d+)", current)
@@ -52,25 +55,28 @@ def main():
         releases[path] = current, f"{original}-jm.{revision}"
 
     base = git("merge-base", "HEAD", upstream).stdout.strip()
-    base_version = version(git("show", f"{base}:remnanode.sh").stdout, "remnanode.sh")
+    base_versions = {path: version(git("show", f"{base}:{path}").stdout, path) for path in releases}
     merged = git("-c", "merge.conflictStyle=merge", "merge", "--no-ff", "--no-commit", upstream, check=False)
     conflicts = git("diff", "--name-only", "--diff-filter=U").stdout.splitlines()
     if merged.returncode and not conflicts:
         raise ValueError(merged.stderr)
     # Resolve only version lines. Changes to executable code always need review.
     for path in conflicts:
-        if path in ("README.md", "README_RU.md"):
+        if path in ("README.md", "README_RU.md", "README-selfsteal.md"):
             # Remove only our version overlay, then let Git merge all document content.
             with tempfile.TemporaryDirectory() as directory:
                 files = [Path(directory) / name for name in ('ours', 'base', 'theirs')]
                 for file, stage in zip(files, (2, 1, 3)):
                     text = git('show', f':{stage}:{path}').stdout
                     if stage == 2:
-                        text = readme_version(text, base_version)
+                        for script, release in base_versions.items():
+                            text = readme_version(text, release, script)
                     file.write_text(text, encoding='utf-8', newline='\n')
                 result = git('merge-file', '-p', *(str(file) for file in files), check=False)
                 if result.returncode == 0:
-                    text = readme_version(result.stdout, releases['remnanode.sh'][0])
+                    text = result.stdout
+                    for script, (release, _) in releases.items():
+                        text = readme_version(text, release, script)
                     Path(path).write_text(text, encoding='utf-8', newline='\n')
                     git('add', '--', path)
             continue
@@ -80,7 +86,7 @@ def main():
 
         def resolve(match):
             ours, theirs = match[1], match[2]
-            metadata = r'^(?:# Version: \S+|SCRIPT_VERSION="[^"]+")\n'
+            metadata = r'^(?:# Version: \S+|# VERSION=\S+|SCRIPT_VERSION="[^"]+")\n'
             if re.sub(metadata, "", ours, flags=re.M) == re.sub(metadata, "", theirs, flags=re.M):
                 return ours
             return match[0]
@@ -95,15 +101,18 @@ def main():
 
     for path, (old, new) in releases.items():
         text = Path(path).read_text(encoding="utf-8")
-        text = re.sub(r"^# Version: \S+$", f"# Version: {new}", text, flags=re.M)
-        if path == "remnanode.sh":
+        text = re.sub(r"^(# Version: |# VERSION=)\S+$", lambda match: match[1] + new, text, flags=re.M)
+        if path != "remnanode-xray-update.sh":
             text = re.sub(r'^SCRIPT_VERSION="[^"]+"$', f'SCRIPT_VERSION="{new}"', text, flags=re.M)
         Path(path).write_text(text, encoding="utf-8", newline="\n")
         git("add", "--", path)
     old, new = releases["remnanode.sh"]
-    for path in ("README.md", "README_RU.md"):
+    for path in ("README.md", "README_RU.md", "README-selfsteal.md"):
         if Path(path).exists():
-            Path(path).write_text(Path(path).read_text(encoding="utf-8").replace(old, new), encoding="utf-8", newline="\n")
+            text = Path(path).read_text(encoding="utf-8")
+            for script, (_, release) in releases.items():
+                text = readme_version(text, release, script)
+            Path(path).write_text(text, encoding="utf-8", newline="\n")
             git("add", "--", path)
     git("commit", "-m", f"Merge upstream {upstream[:12]}; release v{new}")
     print(f"Prepared v{new}; run tests before publishing")
