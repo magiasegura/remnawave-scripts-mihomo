@@ -1,5 +1,5 @@
 #!/bin/bash
-# Version: 1.0.0-jm.2
+# Version: 1.0.0-jm.3
 set -e
 # RemnaNode Xray-core Updater
 # Created by DigneZzZ
