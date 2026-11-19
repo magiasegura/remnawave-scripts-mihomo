@@ -2,7 +2,7 @@
 
 # 🎭 Selfsteal — Caddy/Nginx для Reality
 
-[![Версия](https://img.shields.io/badge/selfsteal.sh-2.11.2-blue.svg)](#-что-нового)
+[![Версия](https://img.shields.io/badge/selfsteal.sh-2.11.2-jm.1-blue.svg)](#-что-нового)
 [![Веб-сервер](https://img.shields.io/badge/Caddy_%7C_Nginx-supported-brightgreen.svg)](#-сравнение-caddy-vs-nginx)
 [![Шаблоны](https://img.shields.io/badge/шаблонов-11_AI--generated-purple.svg)](#-шаблоны-сайтов)
 [![Лицензия MIT](https://img.shields.io/badge/Лицензия-MIT-yellow.svg)](./LICENSE)
@@ -21,6 +21,7 @@
 
 | Версия | Главное |
 |---|---|
+| **2.11.2-jm.1** | Наш форк: Cloudflare DNS-01, отдельный закрытый файл токена, продление без остановки Nginx и восстановление прежних сертификатов при ошибке установки |
 | **2.11.2** | Новые установки используют `nginx:1.30.7-alpine` с исправлениями nginx2root. Меню и `selfsteal update` проверяют версию установленного NGINX. [Бюллетень NGINX](https://nginx.org/en/security_advisories.html) |
 | **2.11.1** | `--nginx`: перед установкой acme.sh проверяется и при необходимости ставится cron — без `crontab` установщик acme.sh завершается ошибкой, и выпуск сертификата срывался |
 | **2.11.0** | Проверка сертификата в главном меню и в `status`: выдан ли он на используемый домен, доверенный ли (не self-signed / Caddy Local Authority), сколько дней осталось — для Nginx и Caddy (ACME-сертификат Caddy читается прямо из Docker-тома) |
@@ -42,17 +43,146 @@
 
 **Порты:** `443` — только Xray · `9443` — внутренний TCP веб-сервера (Caddy или Nginx `--tcp`) · `80` — HTTP→HTTPS редирект · `8443+` — ACME TLS-ALPN для Nginx (автоперебор 8443→9443→10443→18443→28443 или `--acme-port`).
 
+## Cloudflare DNS-01 для Nginx
+
+В нашем форке `2.11.2-jm.1` сертификат можно выпускать и продлевать через
+Cloudflare DNS API. Открывать входящие порты для проверки ACME не нужно;
+контейнер Nginx во время выпуска не останавливается. После успешной установки
+сертификата выполняются `nginx -t` и reload.
+
+### 1. Установите наш управляющий скрипт
+
+Команды выполняйте по SSH на ноде. Закройте старое меню Selfsteal.
+Этот блок заменяет только `/usr/local/bin/selfsteal`, сохраняя его предыдущую
+копию, сайт, контейнеры и конфигурацию:
+
+```bash
+(
+  set -e
+  downloaded=$(mktemp)
+  trap 'rm -f "$downloaded"' EXIT
+  curl -fSL --connect-timeout 15 --max-time 120 \
+    https://raw.githubusercontent.com/magiasegura/remnawave-scripts-mihomo/feature/jolymmiles-xray/selfsteal.sh \
+    -o "$downloaded"
+  bash -n "$downloaded"
+  grep -Eq '^SCRIPT_VERSION="[0-9]+\.[0-9]+\.[0-9]+-jm\.[0-9]+"$' "$downloaded"
+  sudo bash "$downloaded" install-script
+  sudo /usr/local/bin/selfsteal --version
+)
+```
+
+В выводе должна быть версия `2.11.2-jm.1` или новее с суффиксом `jm`.
+Команда `install-script` устанавливает только CLI и печатает путь к его
+резервной копии. Сохраняются `.env`, Compose, конфигурация Nginx, сайт,
+сертификаты и задачи cron; контейнеры не перезапускаются. Для перехода с
+оригинального Selfsteal не запускайте `install`.
+
+Если нужно вернуть прежний CLI, подставьте сохранённый путь к копии:
+
+```bash
+sudo install -m 0755 /usr/local/bin/selfsteal.backup.DATE.SUFFIX /usr/local/bin/selfsteal
+```
+
+Это также заменяет только CLI, без отката или удаления настроек сайта.
+
+Последующие обновления `selfsteal update` получает из нашего репозитория.
+
+### 2. Создайте токен и файл доступа
+
+Создайте Cloudflare API Token с правом **Zone → DNS → Edit**, ограниченным
+нужной зоной. Найдите Zone ID на странице зоны. Global API Key не требуется.
+[Инструкция acme.sh для Cloudflare](https://github.com/acmesh-official/acme.sh/wiki/dnsapi#1-cloudflare-option)
+и [создание токена Cloudflare](https://developers.cloudflare.com/fundamentals/api/get-started/create-token/).
+
+Создайте файл на хосте, вне каталогов сайта, SSL и контейнера:
+
+```bash
+sudo install -o root -g root -m 0600 /dev/null /root/selfsteal-cloudflare.env
+sudo nano /root/selfsteal-cloudflare.env
+```
+
+Впишите две строки, подставив свои значения. Кавычки и `export` не нужны:
+
+```text
+CF_Token=YOUR_CLOUDFLARE_API_TOKEN
+CF_Zone_ID=YOUR_32_CHARACTER_ZONE_ID
+```
+
+После сохранения:
+
+```bash
+sudo chown root:root /root/selfsteal-cloudflare.env
+sudo chmod 600 /root/selfsteal-cloudflare.env
+```
+
+Не добавляйте токен в `.env` Selfsteal: этот файл передаётся контейнеру.
+Наш обработчик принимает только отдельный файл владельца root с правами `600`
+или `400` и не исполняет его как shell-код.
+
+### 3. Переключите существующий Nginx на DNS-01
+
+```bash
+sudo selfsteal --nginx --dns-cloudflare \
+  --dns-credentials /root/selfsteal-cloudflare.env renew-ssl
+```
+
+Домен берётся из `/opt/nginx-selfsteal/.env`. Сайт и конфигурация Nginx не
+пересоздаются. При ошибке установки нового сертификата предыдущая пара
+сертификат/ключ восстанавливается; незавершённый выпуск не заменяется self-signed.
+Если восстановить файлы не удалось, выводится путь к сохранённой резервной копии.
+
+Для новой установки Nginx используйте те же флаги с `install`:
+
+```bash
+sudo selfsteal --nginx --dns-cloudflare \
+  --dns-credentials /root/selfsteal-cloudflare.env install
+```
+
+### 4. Продление и диагностика
+
+После успешного выпуска сохраняется только путь к файлу доступа и создаётся
+ежедневная задача root в cron. Файл доступа нужно оставить на месте: задача
+читает его при каждом запуске. При ротации токена обновите содержимое этого
+файла, сохранив владельца и права.
+
+```bash
+# Проверить продление без принудительного перевыпуска
+sudo selfsteal --nginx renew-ssl
+
+# Принудительно перевыпустить через тот же DNS-01
+sudo selfsteal --nginx reissue-cert
+
+# Посмотреть сертификат, который использует Nginx
+sudo selfsteal --nginx status
+```
+
+Флаги и путь повторно передавать не нужно. DNS-01 не использует `--acme-port`,
+standalone-сервер или правила iptables. Вывод acme.sh записывается в закрытый
+файл `/root/.acme.sh/selfsteal-dns.log`, а не в общий лог Selfsteal. Сам acme.sh
+также может сохранять токен в своих конфигурационных файлах; его каталог
+защищается правами `700`.
+
+DNS-01 подтверждает владение доменом для сертификата. DNS и маршрут к Reality
+по-прежнему должны быть настроены отдельно. Нужен обычный hostname;
+выпуск wildcard-сертификата этим режимом не предусмотрен.
+
+Для Caddy эти флаги поддерживаются при `install`: используются SSL-файлы
+через существующий bind mount. После продления Caddy кратко перезапускается,
+так как его admin API отключён. Существующий Caddy с внутренним ACME нужно
+сначала перенастроить на файловые сертификаты; `renew-ssl` не переписывает его
+конфигурацию автоматически.
+
 ## ⚡ Установка
 
 ```bash
 # Caddy (по умолчанию)
-bash <(curl -Ls https://github.com/DigneZzZ/remnawave-scripts/raw/main/selfsteal.sh) @ install
+bash <(curl -Ls https://raw.githubusercontent.com/magiasegura/remnawave-scripts-mihomo/feature/jolymmiles-xray/selfsteal.sh) @ install
 
 # Nginx с Unix socket (рекомендуется — см. сравнение ниже)
-bash <(curl -Ls https://github.com/DigneZzZ/remnawave-scripts/raw/main/selfsteal.sh) @ --nginx install
+bash <(curl -Ls https://raw.githubusercontent.com/magiasegura/remnawave-scripts-mihomo/feature/jolymmiles-xray/selfsteal.sh) @ --nginx install
 
 # Nginx с TCP-портом вместо socket
-bash <(curl -Ls https://github.com/DigneZzZ/remnawave-scripts/raw/main/selfsteal.sh) @ --nginx --tcp install
+bash <(curl -Ls https://raw.githubusercontent.com/magiasegura/remnawave-scripts-mihomo/feature/jolymmiles-xray/selfsteal.sh) @ --nginx --tcp install
 ```
 
 <details>
@@ -60,13 +190,13 @@ bash <(curl -Ls https://github.com/DigneZzZ/remnawave-scripts/raw/main/selfsteal
 
 ```bash
 # Базовая force-установка (без интерактивных запросов и DNS-проверки)
-bash <(curl -Ls https://github.com/DigneZzZ/remnawave-scripts/raw/main/selfsteal.sh) @ --nginx --force --domain reality.example.com install
+bash <(curl -Ls https://raw.githubusercontent.com/magiasegura/remnawave-scripts-mihomo/feature/jolymmiles-xray/selfsteal.sh) @ --nginx --force --domain reality.example.com install
 
 # С конкретным портом и шаблоном
-bash <(curl -Ls https://github.com/DigneZzZ/remnawave-scripts/raw/main/selfsteal.sh) @ --nginx --force --domain reality.example.com --port 8443 --template 5 install
+bash <(curl -Ls https://raw.githubusercontent.com/magiasegura/remnawave-scripts-mihomo/feature/jolymmiles-xray/selfsteal.sh) @ --nginx --force --domain reality.example.com --port 8443 --template 5 install
 
 # С ручным wildcard-сертификатом (Nginx или Caddy)
-bash <(curl -Ls https://github.com/DigneZzZ/remnawave-scripts/raw/main/selfsteal.sh) @ --nginx --force --domain reality.example.com \
+bash <(curl -Ls https://raw.githubusercontent.com/magiasegura/remnawave-scripts-mihomo/feature/jolymmiles-xray/selfsteal.sh) @ --nginx --force --domain reality.example.com \
     --ssl-cert /path/to/fullchain.crt --ssl-key /path/to/private.key install
 ```
 
@@ -79,6 +209,8 @@ bash <(curl -Ls https://github.com/DigneZzZ/remnawave-scripts/raw/main/selfsteal
 | `--ssl-cert` / `--ssl-key` | Ручной сертификат (fullchain) и ключ |
 | `--h3`, `--quic` | Включить HTTP/3 у Caddy (по умолчанию **выкл**) |
 | `--socket` / `--tcp` | Nginx: Unix socket (дефолт) / TCP-порт |
+| `--dns-cloudflare` | Выпуск и продление через Cloudflare DNS-01 |
+| `--dns-credentials <file>` | Отдельный файл `CF_Token` и `CF_Zone_ID`, root и права `600` |
 | `--acme-port <port>` | Nginx: конкретный порт для ACME TLS-ALPN |
 | `--no-randomize` | Отключить антифингерпринт-мутацию шаблона |
 
@@ -94,6 +226,7 @@ selfsteal          # интерактивное меню
 
 | Команда | Описание |
 |---|---|
+| `install-script` | Установить только наш CLI с резервной копией старого; сайт и настройки сохраняются |
 | `install` / `uninstall` | Установка / удаление (только один веб-сервер одновременно) |
 | `up` / `down` / `restart` / `status` / `logs` | Управление сервисами; `status` показывает сертификат: домен, издатель, доверие, срок (для Caddy — из Docker-тома) |
 | `template` | Выбор/смена шаблона (с бэкапом предыдущего) |

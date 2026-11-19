@@ -69,7 +69,7 @@ jobs:
         with:
           ref: ${{ needs.prepare.outputs.commit }}
           persist-credentials: false
-      - run: bash -n remnanode.sh && bash -n remnanode-xray-update.sh
+      - run: bash -n remnanode.sh && bash -n remnanode-xray-update.sh && bash -n selfsteal.sh
       - run: bash tests/run-tests.sh
 
   pull-request:

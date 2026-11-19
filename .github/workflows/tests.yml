@@ -20,6 +20,7 @@ jobs:
         run: |
           bash -n remnanode.sh
           bash -n remnanode-xray-update.sh
+          bash -n selfsteal.sh
           bash -n tests/test-upstream-sync.sh
       - name: Run all suites on Linux
         run: bash tests/run-tests.sh
