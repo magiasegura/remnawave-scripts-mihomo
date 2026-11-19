@@ -7,9 +7,9 @@
 # ║  Author:  DigneZzZ (https://github.com/DigneZzZ)               ║
 # ║  License: MIT                                                  ║
 # ╚════════════════════════════════════════════════════════════════╝
-# VERSION=2.11.2-jm.1
+# VERSION=2.11.2-jm.2
 
-SCRIPT_VERSION="2.11.2-jm.1"
+SCRIPT_VERSION="2.11.2-jm.2"
 
 # Handle @ prefix for consistency with other scripts
 if [ $# -gt 0 ] && [ "$1" = "@" ]; then
@@ -1228,6 +1228,40 @@ renew_dns_ssl_command() {
     fi
     setup_dns_auto_renewal "$domain" || return 1
     log_success 'Cloudflare DNS-01 certificate renewal completed'
+}
+
+configure_dns01_command() {
+    check_running_as_root
+    if [ "$WEB_SERVER" != nginx ] || [ ! -f "$APP_DIR/.env" ] || [ ! -f "$APP_DIR/docker-compose.yml" ]; then
+        log_error 'This menu requires an existing Nginx Selfsteal installation.'
+        return 1
+    fi
+    local credentials="${ACME_DNS_CREDENTIALS:-/root/selfsteal-cloudflare.env}" input confirm rc=0
+    clear
+    echo -e "${WHITE}🌐 Cloudflare DNS-01${NC}"
+    echo -e "${GRAY}$(printf '─%.0s' $(seq 1 40))${NC}"
+    echo
+    echo -e "   ${GRAY}Prepare a root-owned file with permissions 600 containing:${NC}"
+    echo -e "   ${WHITE}CF_Token=...${NC}"
+    echo -e "   ${WHITE}CF_Zone_ID=...${NC}"
+    echo -e "   ${GRAY}Keep this file outside the Selfsteal installation directory.${NC}"
+    echo
+    IFS= read -r -p "Credentials file [$credentials] (Q to cancel): " input || return 1
+    case "$input" in q|Q) return 0 ;; esac
+    credentials="${input:-$credentials}"
+    (load_cloudflare_credentials "$credentials") || return 1
+    read -r -p 'Enable Cloudflare DNS-01 and automatic renewal? [y/N]: ' confirm || return 1
+    case "$confirm" in y|Y) ;; *) return 0 ;; esac
+    (
+        ACME_DNS_PROVIDER=cloudflare
+        ACME_DNS_CREDENTIALS="$credentials"
+        renew_dns_ssl_command
+    ) || rc=$?
+    if [ -f "$APP_DIR/.dns01-credentials" ]; then
+        ACME_DNS_CREDENTIALS=''
+        load_dns_settings || return 1
+    fi
+    return "$rc"
 }
 # END SELFSTEAL DNS01
 
@@ -6069,6 +6103,11 @@ main_menu() {
         
         printf "   ${WHITE}%-10s${NC} ${GRAY}%s${NC}\n" "Server:" "$server_name"
         report_nginx_version
+        if [ "$WEB_SERVER" = nginx ]; then
+            local dns_status='Not configured'
+            [ "${ACME_DNS_PROVIDER:-}" != cloudflare ] || dns_status=Cloudflare
+            printf "   ${WHITE}%-10s${NC} ${GRAY}%s${NC}\n" 'DNS-01:' "$dns_status"
+        fi
         if [ -n "$domain" ]; then
             printf "   ${WHITE}%-10s${NC} ${GRAY}%s${NC}\n" "Domain:" "$domain"
         fi
@@ -6121,6 +6160,9 @@ main_menu() {
         echo -e "${WHITE}🗑️  Maintenance:${NC}"
         echo -e "   ${WHITE}13)${NC} 🗑️  Uninstall $server_name"
         echo -e "   ${WHITE}14)${NC} 🔄 Check for updates"
+        if [ "$WEB_SERVER" = nginx ]; then
+            echo -e "   ${WHITE}15)${NC} 🌐 Configure Cloudflare DNS-01"
+        fi
         echo
         echo -e "   ${GRAY}0)${NC} ⬅️  Exit"
         echo
@@ -6143,7 +6185,9 @@ main_menu() {
                 ;;
         esac
 
-        read -p "$(echo -e "${WHITE}Select option [0-14]:${NC} ")" choice
+        local max_option=14
+        [ "$WEB_SERVER" != nginx ] || max_option=15
+        read -p "$(echo -e "${WHITE}Select option [0-$max_option]:${NC} ")" choice
 
         case "$choice" in
             1) install_command; read -p "Press Enter to continue..." ;;
@@ -6165,6 +6209,7 @@ main_menu() {
                 ;;
             13) uninstall_command; read -p "Press Enter to continue..." ;;
             14) update_command; read -p "Press Enter to continue..." ;;
+            15) configure_dns01_command || true; read -p "Press Enter to continue..." ;;
             0) clear; exit 0 ;;
             *) 
                 echo -e "${RED}❌ Invalid option!${NC}"

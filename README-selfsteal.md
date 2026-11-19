@@ -2,7 +2,7 @@
 
 # 🎭 Selfsteal — Caddy/Nginx для Reality
 
-[![Версия](https://img.shields.io/badge/selfsteal.sh-2.11.2-jm.1-blue.svg)](#-что-нового)
+[![Версия](https://img.shields.io/badge/selfsteal.sh-2.11.2-jm.2-blue.svg)](#-что-нового)
 [![Веб-сервер](https://img.shields.io/badge/Caddy_%7C_Nginx-supported-brightgreen.svg)](#-сравнение-caddy-vs-nginx)
 [![Шаблоны](https://img.shields.io/badge/шаблонов-11_AI--generated-purple.svg)](#-шаблоны-сайтов)
 [![Лицензия MIT](https://img.shields.io/badge/Лицензия-MIT-yellow.svg)](./LICENSE)
@@ -21,6 +21,7 @@
 
 | Версия | Главное |
 |---|---|
+| **2.11.2-jm.2** | Настройка Cloudflare DNS-01 из меню Nginx: пункт 15, выбор файла доступа и отображение текущего статуса |
 | **2.11.2-jm.1** | Наш форк: Cloudflare DNS-01, отдельный закрытый файл токена, продление без остановки Nginx и восстановление прежних сертификатов при ошибке установки |
 | **2.11.2** | Новые установки используют `nginx:1.30.7-alpine` с исправлениями nginx2root. Меню и `selfsteal update` проверяют версию установленного NGINX. [Бюллетень NGINX](https://nginx.org/en/security_advisories.html) |
 | **2.11.1** | `--nginx`: перед установкой acme.sh проверяется и при необходимости ставится cron — без `crontab` установщик acme.sh завершается ошибкой, и выпуск сертификата срывался |
@@ -71,7 +72,7 @@ Cloudflare DNS API. Открывать входящие порты для про
 )
 ```
 
-В выводе должна быть версия `2.11.2-jm.1` или новее с суффиксом `jm`.
+В выводе должна быть версия `2.11.2-jm.2` или новее с суффиксом `jm`.
 Команда `install-script` устанавливает только CLI и печатает путь к его
 резервной копии. Сохраняются `.env`, Compose, конфигурация Nginx, сайт,
 сертификаты и задачи cron; контейнеры не перезапускаются. Для перехода с
@@ -120,6 +121,23 @@ sudo chmod 600 /root/selfsteal-cloudflare.env
 или `400` и не исполняет его как shell-код.
 
 ### 3. Переключите существующий Nginx на DNS-01
+
+Откройте меню:
+
+```bash
+sudo selfsteal --nginx
+```
+
+Выберите **15 — Configure Cloudflare DNS-01**, укажите путь
+`/root/selfsteal-cloudflare.env` (Enter оставляет этот путь) и подтвердите
+включение буквой `y`. После успешной настройки меню покажет
+`DNS-01: Cloudflare`.
+
+Если пункта 15 нет, закройте меню, выполните `sudo selfsteal --nginx update`
+и откройте его заново. Этот пункт доступен начиная с версии `2.11.2-jm.2`.
+Для оригинального скрипта сначала выполните переход из шага 1.
+
+То же действие одной командой:
 
 ```bash
 sudo selfsteal --nginx --dns-cloudflare \

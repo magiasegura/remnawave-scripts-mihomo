@@ -190,3 +190,30 @@ grep -q -- '--dns-cloudflare' "$sandbox/help"
 grep -q -- '--dns-credentials' "$sandbox/help"
 if bash "$ROOT/selfsteal.sh" --dns-credentials > "$sandbox/result" 2>&1; then echo 'FAIL: accepted missing credentials argument'; exit 1; fi
 echo 'PASS: CLI documents DNS options and rejects a missing credentials path'
+
+load_function configure_dns01_command
+clear() { :; }
+rm "$APP_DIR/.dns01-credentials"
+ACME_DNS_PROVIDER='' ACME_DNS_CREDENTIALS=''
+configure_dns01_command <<< "$(printf '%s\ny\n' "$sandbox/cloudflare.env")" > "$sandbox/menu" 2>&1
+[ "$ACME_DNS_PROVIDER" = cloudflare ]
+[ "$ACME_DNS_CREDENTIALS" = "$sandbox/cloudflare.env" ]
+! grep -q fixture-token "$sandbox/menu"
+before=$(wc -l < "$CALLS")
+configure_dns01_command <<< q > "$sandbox/menu" 2>&1
+[ "$(wc -l < "$CALLS")" = "$before" ]
+echo 'PASS: interactive DNS setup saves the selected file, refreshes state, and supports cancellation'
+
+eval "$(awk '/^main_menu\(\) \{/ { inside=1 } inside { print } inside && /^}$/ { exit }' "$ROOT/selfsteal.sh")"
+report_nginx_version() { :; }
+check_for_updates_silent() { :; }
+print_menu_ssl_line() { return 0; }
+docker() { [ "$*" != 'compose ps --format {{.State}}' ] || echo running; }
+SCRIPT_VERSION=test BLUE='' RED=''
+(main_menu <<< 0) > "$sandbox/menu" 2>&1
+grep -q '15).*Cloudflare DNS-01' "$sandbox/menu"
+grep -q 'DNS-01:.*Cloudflare' "$sandbox/menu"
+WEB_SERVER=caddy
+(main_menu <<< 0) > "$sandbox/menu" 2>&1
+! grep -q '15).*Cloudflare DNS-01' "$sandbox/menu"
+echo 'PASS: the Nginx menu exposes DNS-01 configuration and active status'
